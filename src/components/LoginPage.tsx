@@ -151,7 +151,7 @@ export function LoginPage({
     if (matchedSeed) {
       if (isCustomerRole && matchedSeed.roleId !== 'customer') {
         setAuthError(
-          'Akun ini adalah akun internal laboratorium. Pilih peran Admin, Manajer Teknis, atau Kepala Balai di panel kiri.'
+          'Akun ini adalah akun internal laboratorium. Pilih portal Internal Lab di panel kiri.'
         );
         return;
       }
@@ -328,9 +328,9 @@ export function LoginPage({
   };
 
   return (
-    <div className="grid min-h-screen grid-cols-1 bg-slate-50 lg:grid-cols-12">
-      {/* LEFT PANEL: Deep Slate Navy Context & Role Authority */}
-      <aside className="flex flex-col justify-between bg-slate-900 px-6 py-8 text-slate-100 sm:px-10 lg:col-span-5 lg:px-12 lg:py-10">
+    <div className="flex min-h-screen flex-col bg-white lg:flex-row">
+      {/* LEFT PANEL: Deep Slate Navy Context & Portal Selector (Fixed Width + Sticky Desktop) */}
+      <aside className="flex w-full shrink-0 flex-col justify-between bg-slate-900 px-6 py-8 text-slate-100 sm:px-10 lg:sticky lg:top-0 lg:h-screen lg:w-[500px] xl:w-[580px] lg:overflow-y-auto lg:px-12 lg:py-10">
         <div>
           <div className="flex items-center justify-between gap-4">
             <button
@@ -350,7 +350,7 @@ export function LoginPage({
             </button>
           </div>
 
-          <div className="mt-10 lg:mt-14">
+          <div className="mt-8 lg:mt-10">
             <p className="font-mono text-xs text-cyan-400">
               Firebase Auth &amp; Cloud Firestore · ISO/IEC 17025
             </p>
@@ -363,73 +363,111 @@ export function LoginPage({
             </p>
           </div>
 
-          {/* Role Selector */}
-          <div className="mt-8">
+          {/* Portal Entry Selector: Pelanggan vs Internal Lab */}
+          <div className="mt-7">
             <p className="text-xs font-medium text-slate-400">Pilih Portal Masuk</p>
-            <div className="mt-2.5 grid grid-cols-2 gap-2">
-              {PORTAL_ROLES.map((role) => {
-                const isSelected = role.id === selectedRoleId;
-                return (
-                  <button
-                    key={role.id}
-                    type="button"
-                    onClick={() => handleRoleSwitch(role.id)}
-                    className={`min-h-[42px] rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors cursor-pointer ${
-                      isSelected
-                        ? 'border-cyan-500 bg-cyan-500/15 text-white'
-                        : 'border-slate-800 bg-slate-950/50 text-slate-300 hover:border-slate-700 hover:text-white'
-                    }`}
-                  >
-                    <span className="block truncate font-semibold">{role.shortTitle}</span>
-                    <span className="mt-0.5 block truncate text-[11px] text-slate-400">
-                      {role.category === 'external' ? 'Eksternal' : 'Internal Lab'}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => handleRoleSwitch('customer')}
+                className={`min-h-[48px] rounded-lg border px-3.5 py-2.5 text-left text-xs font-medium transition-colors cursor-pointer ${
+                  isCustomerRole
+                    ? 'border-cyan-500 bg-cyan-500/15 text-white'
+                    : 'border-slate-800 bg-slate-950/50 text-slate-300 hover:border-slate-700 hover:text-white'
+                }`}
+              >
+                <span className="block truncate font-semibold">Pelanggan</span>
+                <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                  Eksternal · HSE Perusahaan
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleRoleSwitch('admin')}
+                className={`min-h-[48px] rounded-lg border px-3.5 py-2.5 text-left text-xs font-medium transition-colors cursor-pointer ${
+                  !isCustomerRole
+                    ? 'border-cyan-500 bg-cyan-500/15 text-white'
+                    : 'border-slate-800 bg-slate-950/50 text-slate-300 hover:border-slate-700 hover:text-white'
+                }`}
+              >
+                <span className="block truncate font-semibold">Internal Lab</span>
+                <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                  Admin · Teknis · Pimpinan
+                </span>
+              </button>
             </div>
           </div>
 
-          {/* Active Role Privileges */}
+          {/* Active Portal Privileges */}
           <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/60 p-5">
-            <p className="font-mono text-[11px] text-emerald-400">{activeRole.outputBadge}</p>
-            <h2 className="mt-1 font-display text-base font-semibold text-white">
-              {activeRole.label}
-            </h2>
-            <ul className="mt-3.5 space-y-2.5">
-              {activeRole.capabilities.map((item) => (
-                <li key={item} className="flex items-start gap-2.5 text-xs text-slate-300">
-                  <Check
-                    className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400"
-                    aria-hidden="true"
-                  />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
+            {isCustomerRole ? (
+              <>
+                <p className="font-mono text-[11px] text-emerald-400">{activeRole.outputBadge}</p>
+                <h2 className="mt-1 font-display text-base font-semibold text-white">
+                  {activeRole.label}
+                </h2>
+                <ul className="mt-3.5 space-y-2.5">
+                  {activeRole.capabilities.map((item) => (
+                    <li key={item} className="flex items-start gap-2.5 text-xs text-slate-300">
+                      <Check
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400"
+                        aria-hidden="true"
+                      />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <>
+                <p className="font-mono text-[11px] text-emerald-400">
+                  Verifikasi, Kaji Ulang ISO 17025, &amp; Eksekutif
+                </p>
+                <h2 className="mt-1 font-display text-base font-semibold text-white">
+                  Portal Internal Laboratorium
+                </h2>
+                <ul className="mt-3.5 space-y-2.5">
+                  {[
+                    'Verifikasi berkas permohonan & manajemen kuota kalender tim (Admin Lab)',
+                    'Kaji ulang permintaan ISO/IEC 17025 & penugasan tim BNSP (Manajer Teknis)',
+                    'Penerbitan SPH final, SPK lapangan, & ringkasan eksekutif (Kepala Balai)',
+                    'Hak akses otomatis disesuaikan berdasarkan akun internal yang masuk',
+                  ].map((item) => (
+                    <li key={item} className="flex items-start gap-2.5 text-xs text-slate-300">
+                      <Check
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400"
+                        aria-hidden="true"
+                      />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
         </div>
 
-        <div className="mt-10 flex items-center gap-2.5 border-t border-slate-800 pt-5 text-xs text-slate-400">
+        <div className="mt-8 flex items-center gap-2.5 border-t border-slate-800 pt-5 text-xs text-slate-400">
           <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-400" aria-hidden="true" />
           <span>Enkripsi TLS 1.3 · Aturan Keamanan Firestore Tervalidasi</span>
         </div>
       </aside>
 
       {/* RIGHT PANEL: Production Role-Specific Auth */}
-      <main className="flex flex-col justify-center bg-white px-5 py-10 sm:px-10 lg:col-span-7 lg:px-16">
+      <main className="flex flex-1 flex-col justify-center bg-white px-5 py-10 sm:px-10 lg:px-16">
         <div className="mx-auto w-full max-w-md">
           <div>
             <h2 className="font-display text-2xl font-bold tracking-tight text-slate-900">
               {!isCustomerRole
-                ? `Masuk ${activeRole.shortTitle}`
+                ? 'Masuk Portal Internal Lab'
                 : authTab === 'login'
                   ? 'Masuk Portal Pelanggan'
                   : 'Registrasi Badan Usaha'}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
               {!isCustomerRole
-                ? `Autentikasi kredensial internal untuk ${activeRole.label}`
+                ? 'Masuk menggunakan username atau email instansi untuk Admin Lab, Manajer Teknis, atau Kepala Balai'
                 : authTab === 'login'
                   ? 'Masuk dengan Email / Username perusahaan atau akun Google Anda'
                   : 'Daftarkan profil badan usaha dengan Email atau akun Google'}
@@ -504,11 +542,7 @@ export function LoginPage({
                       placeholder={
                         isCustomerRole
                           ? 'pelanggan atau email@perusahaan.co.id'
-                          : selectedRoleId === 'admin'
-                            ? 'admin atau admin@smartlims.id'
-                            : selectedRoleId === 'technical_manager'
-                              ? 'manajerteknis atau teknis@smartlims.id'
-                              : 'kepalabalai atau pimpinan@smartlims.id'
+                          : 'admin, manajerteknis, atau email@smartlims.id'
                       }
                       className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white py-2.5 pr-3.5 pl-10 text-sm text-slate-900 placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20"
                     />
@@ -583,7 +617,9 @@ export function LoginPage({
                   <span>
                     {isAuthenticating
                       ? 'Memverifikasi Kredensial...'
-                      : `Masuk ke Portal ${activeRole.shortTitle}`}
+                      : isCustomerRole
+                        ? 'Masuk ke Portal Pelanggan'
+                        : 'Masuk ke Portal Internal Lab'}
                   </span>
                 </button>
               </form>

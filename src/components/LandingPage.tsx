@@ -37,7 +37,6 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
   const shouldReduceMotion = useReducedMotion();
   const heroRef = useRef<HTMLElement>(null);
   const simulasiRef = useRef<HTMLElement>(null);
-  const workflowRef = useRef<HTMLDivElement>(null);
 
   const { scrollYProgress } = useScroll();
   const smoothScrollProgress = useSpring(scrollYProgress, {
@@ -55,16 +54,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
 
   const { scrollYProgress: simulasiScrollProgress } = useScroll({
     target: simulasiRef,
-    offset: ['start 90%', 'end 15%'],
-  });
-
-  const { scrollYProgress: workflowProgress } = useScroll({
-    target: workflowRef,
-    offset: ['start 85%', 'end 58%'],
-  });
-  const workflowLineScale = useSpring(workflowProgress, {
-    stiffness: 140,
-    damping: 24,
+    offset: ['start 95%', 'start 20%'],
   });
 
   // Interactive Hero Calculator state
@@ -264,39 +254,33 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
           id="simulasi-baku-mutu"
           className="scroll-mt-16 overflow-hidden border-b border-slate-200 bg-slate-50"
         >
-          <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-            <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-              <div className="max-w-2xl">
-                <p className="font-mono text-xs font-medium text-cyan-700">
-                  Simulasi Pra-Pengajuan · Keterikatan Regulasi &amp; Estimasi Biaya
-                </p>
-                <h2 className="mt-2 font-display text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl text-balance">
-                  Simulasi Pengikatan Baku Mutu dan Estimasi Tarif SPH
-                </h2>
-              </div>
-              <p className="max-w-md text-sm text-slate-600">
-                Sesuaikan matriks contoh uji, parameter SNI, dan jumlah titik untuk mengamati reaksi
-                uji serta estimasi biaya secara langsung.
-              </p>
-            </div>
+          <div className="mx-auto max-w-7xl px-4 pt-10 pb-14 sm:px-6 sm:pt-12 sm:pb-16 lg:px-8 lg:pt-14 lg:pb-16">
+            <div className="grid grid-cols-1 items-stretch gap-8 lg:grid-cols-12 lg:gap-10">
+              {/* Simulation Slide Left: Constrained Header + Scroll-Driven Growing Plant in Erlenmeyer */}
+              <div className="flex flex-col justify-between lg:col-span-5">
+                <div className="max-w-md">
+                  <p className="font-mono text-xs font-medium text-cyan-700">
+                    Simulasi Pra-Pengajuan · Keterikatan Regulasi &amp; Estimasi Biaya
+                  </p>
+                  <h2 className="mt-2 font-display text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl text-balance">
+                    Simulasi Pengikatan Baku Mutu dan Estimasi Tarif SPH
+                  </h2>
+                  <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-600 sm:text-base">
+                    Sesuaikan matriks contoh uji, parameter SNI, dan jumlah titik untuk melihat
+                    keterikatan regulasi serta estimasi biaya secara langsung.
+                  </p>
+                </div>
 
-            <div className="mt-8 grid grid-cols-1 items-stretch gap-8 lg:grid-cols-12">
-              {/* Simulation Slide Left: Enlarged Erlenmeyer Reaction Matching Simulation Card Height */}
-              <motion.div
-                initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.15 }}
-                transition={{ duration: 0.45, ease: 'easeOut' }}
-                className="lg:col-span-6"
-              >
-                <ErlenmeyerReaction
-                  matrix={activePreset.matrix}
-                  regulationCode={activePreset.code}
-                  scrollProgress={simulasiScrollProgress}
-                  selectedParamCount={selectedParameters.length}
-                  pointCount={pointCount}
-                />
-              </motion.div>
+                <motion.div
+                  initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, amount: 0.15 }}
+                  transition={{ duration: 0.45, ease: 'easeOut' }}
+                  className="mt-6 flex items-center justify-center lg:mt-4"
+                >
+                  <ErlenmeyerReaction scrollProgress={simulasiScrollProgress} />
+                </motion.div>
+              </div>
 
               {/* Simulation Slide Right: Interactive Regulation & Cost Estimator Card */}
               <motion.div
@@ -304,7 +288,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, amount: 0.15 }}
                 transition={{ duration: 0.45, delay: 0.06, ease: 'easeOut' }}
-                className="lg:col-span-6"
+                className="lg:col-span-7"
               >
                 <div className="flex h-full flex-col justify-between rounded-xl border border-slate-800 bg-slate-900 p-6 text-slate-100 sm:p-7">
                   <div>
@@ -792,15 +776,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
             </h2>
           </div>
 
-          {/* Scroll-Linked Progress Line Connecting Stages */}
-          <div ref={workflowRef} className="mt-10">
-            <div className="mb-4 hidden h-1 w-full overflow-hidden rounded-full bg-slate-200 lg:block">
-              <motion.div
-                style={shouldReduceMotion ? undefined : { scaleX: workflowLineScale }}
-                className="h-full origin-left rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500"
-              />
-            </div>
-
+          <div className="mt-10">
             {/* 4-Step End-to-End Flow */}
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {[
