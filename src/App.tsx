@@ -4,7 +4,7 @@ import { AdminPortal } from './components/AdminPortal';
 import { CustomerPortal } from './components/CustomerPortal';
 import { LandingPage } from './components/LandingPage';
 import { LoginPage } from './components/LoginPage';
-import { INITIAL_CALENDAR_DAYS, SAMPLER_TEAMS } from './data/limsMockDatabase';
+import { DEMO_USERS, INITIAL_CALENDAR_DAYS, SAMPLER_TEAMS } from './data/limsMockDatabase';
 import { PortalRoleId } from './data/limsPreviewData';
 import { auth } from './lib/firebase';
 import {
@@ -34,10 +34,12 @@ import {
 type PageView = 'landing' | 'login' | 'portal';
 
 function isUserAuthAllowed(fbUser: User): boolean {
+  const email = (fbUser.email || '').toLowerCase();
+  const isSeededAccount = DEMO_USERS.some((u) => u.email.toLowerCase() === email);
   const isPasswordProvider = fbUser.providerData.some(
     (p) => p.providerId === 'password'
   );
-  return fbUser.emailVerified || isPasswordProvider;
+  return fbUser.emailVerified || (isSeededAccount && isPasswordProvider);
 }
 
 export default function App() {

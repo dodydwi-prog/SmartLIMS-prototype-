@@ -112,6 +112,18 @@
         "updatedAt"
       ]
     },
+    "UsernameLookup": {
+      "title": "UsernameLookup",
+      "description": "Pemetaan unik username pelanggan ke email terdaftar untuk mendukung login via username.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "username": { "type": "string", "pattern": "^[a-z0-9_\\-]+$", "minLength": 3, "maxLength": 64 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username", "email", "createdAt"]
+    },
     "AuditLogEntry": {
       "title": "AuditLogEntry",
       "description": "Jejak audit permanen ISO/IEC 17025 yang tidak dapat diubah atau dihapus.",
@@ -133,6 +145,10 @@
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "Profil pengguna dan perusahaan terdaftar dengan isolasi PII per pemilik atau Admin."
+    },
+    "/usernames/{usernameId}": {
+      "schema": { "$ref": "#/entities/UsernameLookup" },
+      "description": "Indeks lookup username unik ke email untuk login pelanggan via username (get-only, tanpa list)."
     },
     "/admins/{userId}": {
       "schema": { "$ref": "#/entities/AdminRecord" },

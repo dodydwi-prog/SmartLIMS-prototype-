@@ -81,6 +81,9 @@ export function CustomerWizard({
   const [locatingPointId, setLocatingPointId] = useState<string | null>(null);
 
   // Step 1 state
+  const initialRawSector =
+    editingRequest?.sectorId ?? currentUser.sectorId ?? 'tekstil';
+  const isPresetSector = INDUSTRY_SECTORS.some((s) => s.id === initialRawSector);
   const [companyName, setCompanyName] = useState(
     editingRequest?.companyName ?? currentUser.companyName
   );
@@ -88,7 +91,10 @@ export function CustomerWizard({
     editingRequest?.nibNumber ?? currentUser.nibOrNip
   );
   const [sectorId, setSectorId] = useState(
-    editingRequest?.sectorId ?? currentUser.sectorId ?? 'tekstil'
+    isPresetSector ? initialRawSector : initialRawSector ? 'lainnya' : ''
+  );
+  const [customSector, setCustomSector] = useState(
+    isPresetSector ? '' : initialRawSector
   );
   const [picName, setPicName] = useState(
     editingRequest?.picName ?? currentUser.name
@@ -149,8 +155,7 @@ export function CustomerWizard({
         ]
   );
 
-  const activeSector =
-    INDUSTRY_SECTORS.find((s) => s.id === sectorId) ?? INDUSTRY_SECTORS[0];
+  const activeSector = INDUSTRY_SECTORS.find((s) => s.id === sectorId) ?? null;
 
   const selectedDayInfo = calendarDays.find((d) => d.date === scheduledDate);
   const selectedDayRemaining = selectedDayInfo
@@ -318,6 +323,14 @@ export function CustomerWizard({
         setStepError('Lengkapi nama perusahaan, penanggung jawab teknis, dan alamat lokasi.');
         return;
       }
+      if (!sectorId) {
+        setStepError('Pilih sektor industri perusahaan terlebih dahulu.');
+        return;
+      }
+      if (sectorId === 'lainnya' && customSector.trim().length < 3) {
+        setStepError('Tuliskan sektor industri perusahaan Anda (minimal 3 karakter).');
+        return;
+      }
     }
 
     if (step === 2) {
@@ -366,6 +379,9 @@ export function CustomerWizard({
     setStepError(null);
     if (!validateBeforeSubmit()) return;
 
+    const resolvedSectorId =
+      sectorId === 'lainnya' ? customSector.trim().slice(0, 64) : sectorId;
+
     setIsSubmitting(true);
     try {
       if (editingRequest && onResubmitRequest) {
@@ -373,7 +389,7 @@ export function CustomerWizard({
           ...editingRequest,
           companyName: companyName.trim(),
           nibNumber: nibNumber.trim(),
-          sectorId,
+          sectorId: resolvedSectorId,
           picName: picName.trim(),
           picPhone: picPhone.trim(),
           siteAddress: siteAddress.trim(),
@@ -408,7 +424,7 @@ export function CustomerWizard({
         companyId: currentUser.id,
         companyName: companyName.trim(),
         nibNumber: nibNumber.trim(),
-        sectorId,
+        sectorId: resolvedSectorId,
         picName: picName.trim(),
         picEmail: currentUser.email,
         picPhone: picPhone.trim(),
@@ -552,13 +568,15 @@ export function CustomerWizard({
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700">
-                  NIB / NPWP Badan Usaha
+                  NIB / NPWP Badan Usaha{' '}
+                  <span className="font-normal text-slate-400">(Opsional)</span>
                 </label>
                 <input
                   type="text"
                   value={nibNumber}
                   onChange={(e) => setNibNumber(e.target.value)}
-                  className="mt-1.5 min-h-[42px] w-full rounded-lg border border-slate-300 px-3.5 font-mono text-sm text-slate-900 focus:border-cyan-600 focus:outline-none"
+                  placeholder="Isi jika ada"
+                  className="mt-1.5 min-h-[42px] w-full rounded-lg border border-slate-300 px-3.5 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none"
                 />
               </div>
               <div>
@@ -570,13 +588,33 @@ export function CustomerWizard({
                   onChange={(e) => setSectorId(e.target.value)}
                   className="mt-1.5 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3.5 text-sm text-slate-900 focus:border-cyan-600 focus:outline-none"
                 >
+                  {!sectorId && (
+                    <option value="" disabled>
+                      -- Pilih Sektor Industri --
+                    </option>
+                  )}
                   {INDUSTRY_SECTORS.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.label}
                     </option>
                   ))}
+                  <option value="lainnya">Lainnya (Isi Sendiri / Kustom)</option>
                 </select>
               </div>
+              {sectorId === 'lainnya' && (
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Sebutkan Sektor Industri <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={customSector}
+                    onChange={(e) => setCustomSector(e.target.value)}
+                    placeholder="Contoh: Industri Kimia, Farmasi, Pengolahan Limbah B3"
+                    className="mt-1.5 min-h-[42px] w-full rounded-lg border border-cyan-300 bg-cyan-50/30 px-3.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none"
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-slate-700">
                   Nama Penanggung Jawab (HSE)
@@ -825,10 +863,17 @@ export function CustomerWizard({
                   resminya.
                 </p>
               </div>
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-900">
-                Rekomendasi Sektor ({activeSector.label}):{' '}
-                <span className="font-semibold">{activeSector.extraParam}</span>
-              </div>
+              {activeSector ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-900">
+                  Rekomendasi Sektor ({activeSector.label}):{' '}
+                  <span className="font-semibold">{activeSector.extraParam}</span>
+                </div>
+              ) : customSector.trim() ? (
+                <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-3.5 py-2 text-xs text-cyan-900">
+                  Sektor Industri:{' '}
+                  <span className="font-semibold">{customSector.trim()}</span>
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-6">
@@ -930,7 +975,9 @@ export function CustomerWizard({
               <div>
                 <p className="text-slate-500">Perusahaan Pemohon</p>
                 <p className="mt-0.5 font-semibold text-slate-900">{companyName}</p>
-                <p className="font-mono text-slate-600">NIB: {nibNumber}</p>
+                {nibNumber.trim() && (
+                  <p className="font-mono text-slate-600">NIB: {nibNumber}</p>
+                )}
               </div>
               <div>
                 <p className="text-slate-500">PJ Lapangan &amp; Lokasi</p>

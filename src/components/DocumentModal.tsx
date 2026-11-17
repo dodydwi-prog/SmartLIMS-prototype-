@@ -214,7 +214,9 @@ export function DocumentModal({ request, docType, onClose }: DocumentModalProps)
                 {activeDocType === 'spk' ? 'Lokasi Sampling Pelanggan' : 'Kepada Yth. Pelanggan'}
               </p>
               <p className="mt-1 text-sm font-bold text-slate-900">{request.companyName}</p>
-              <p className="mt-0.5 font-mono text-slate-600">NIB/NPWP: {request.nibNumber}</p>
+              {request.nibNumber && (
+                <p className="mt-0.5 font-mono text-slate-600">NIB/NPWP: {request.nibNumber}</p>
+              )}
               <p className="mt-0.5 text-slate-600">{request.siteAddress}</p>
             </div>
             <div className="sm:text-right">

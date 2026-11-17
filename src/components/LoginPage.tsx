@@ -1,32 +1,42 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import {
   User,
   createUserWithEmailAndPassword,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
-  signInWithPopup,
+  signOut,
   updateProfile,
 } from 'firebase/auth';
 import {
   ArrowLeft,
   Building2,
   Check,
+  CheckCircle2,
   Eye,
   EyeOff,
   KeyRound,
   Lock,
   Mail,
+  RefreshCw,
   ShieldCheck,
   User as UserIcon,
 } from 'lucide-react';
-import { DEMO_USERS, resolveIdentifierToEmail } from '../data/limsMockDatabase';
+import { DEMO_USERS } from '../data/limsMockDatabase';
 import {
   INDUSTRY_SECTORS,
   PORTAL_ROLES,
   PortalRoleId,
 } from '../data/limsPreviewData';
-import { auth, googleAuthProvider } from '../lib/firebase';
+import { auth } from '../lib/firebase';
+import {
+  checkUsernameAvailable,
+  isValidUsernameFormat,
+  loadPendingCorporateProfile,
+  registerUsernameLookup,
+  resolveLoginIdentifierToEmail,
+  savePendingCorporateProfile,
+} from '../services/limsFirestore';
 import { DemoUser } from '../types/lims';
 
 interface LoginPageProps {
@@ -53,11 +63,12 @@ function mapFirebaseAuthError(err: unknown): string {
   if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
     return 'Metode login Email/Password belum diaktifkan di Firebase Console (Authentication > Sign-in method > Email/Password) untuk proyek caramel-quiz-r41j7.';
   }
-  if (code === 'auth/popup-closed-by-user' || msg.includes('popup-closed-by-user')) {
-    return 'Jendela masuk Google ditutup sebelum selesai. Silakan coba lagi.';
-  }
-  if (code === 'auth/popup-blocked' || msg.includes('popup-blocked')) {
-    return 'Popup browser diblokir. Izinkan popup untuk situs ini agar dapat masuk dengan Google.';
+  if (code === 'auth/unauthorized-domain' || msg.includes('unauthorized-domain')) {
+    const currentHost =
+      typeof window !== 'undefined' && window.location.hostname
+        ? window.location.hostname
+        : 'domain ini';
+    return `Domain "${currentHost}" belum didaftarkan di Firebase Authentication. Tambahkan domain tersebut di Firebase Console → Authentication → Settings → Authorized domains.`;
   }
   if (
     code === 'auth/invalid-credential' ||
@@ -103,19 +114,134 @@ export function LoginPage({
   const [regUsername, setRegUsername] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
   const [companyName, setCompanyName] = useState('');
   const [nibNumber, setNibNumber] = useState('');
-  const [sectorId, setSectorId] = useState(INDUSTRY_SECTORS[0].id);
+  const [sectorId, setSectorId] = useState('');
+  const [customSector, setCustomSector] = useState('');
   const [picName, setPicName] = useState('');
   const [picPhone, setPicPhone] = useState('');
   const [siteAddress, setSiteAddress] = useState('');
 
+  // Email verification gate state
+  const [pendingVerificationUser, setPendingVerificationUser] = useState<User | null>(null);
+  const [pendingCorporateOverride, setPendingCorporateOverride] = useState<
+    Partial<DemoUser> | undefined
+  >(undefined);
+  const [isCheckingVerification, setIsCheckingVerification] = useState(false);
+
   const activeRole =
     PORTAL_ROLES.find((r) => r.id === selectedRoleId) ?? PORTAL_ROLES[0];
-  const activeSector =
-    INDUSTRY_SECTORS.find((s) => s.id === sectorId) ?? INDUSTRY_SECTORS[0];
+  const activeSector = INDUSTRY_SECTORS.find((s) => s.id === sectorId) ?? null;
   const isCustomerRole = selectedRoleId === 'customer';
+
+  const isSeededDemoEmail = (email?: string | null) =>
+    DEMO_USERS.some((u) => u.email.toLowerCase() === (email || '').toLowerCase());
+
+  useEffect(() => {
+    const current = auth.currentUser;
+    if (current && !current.emailVerified && !isSeededDemoEmail(current.email)) {
+      setPendingVerificationUser(current);
+      setPendingCorporateOverride(loadPendingCorporateProfile(current.uid));
+      setAuthNotice(
+        `Akun ${current.email ?? ''} menunggu verifikasi email sebelum dapat masuk ke portal.`
+      );
+    }
+  }, []);
+
+  const promptEmailVerification = async (
+    fbUser: User,
+    corporateOverride?: Partial<DemoUser>
+  ) => {
+    onAuthAbort?.();
+    setIsAuthenticating(false);
+    setPendingVerificationUser(fbUser);
+    setPendingCorporateOverride(corporateOverride);
+    setAuthError(null);
+    try {
+      await sendEmailVerification(fbUser, {
+        url: typeof window !== 'undefined' ? window.location.origin : 'https://smart-lims-sda.vercel.app',
+      });
+      setAuthNotice(
+        `Tautan verifikasi email telah dikirim ke ${fbUser.email ?? 'email Anda'}. Buka kotak masuk atau folder Spam, klik tautan verifikasi, lalu tekan tombol konfirmasi di bawah.`
+      );
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      if (code === 'auth/too-many-requests') {
+        setAuthNotice(
+          `Email verifikasi sudah dikirimkan sebelumnya ke ${fbUser.email ?? 'email Anda'}. Periksa kotak masuk atau folder Spam, lalu tekan tombol konfirmasi setelah memverifikasi.`
+        );
+      } else {
+        setAuthError(mapFirebaseAuthError(err));
+      }
+    }
+  };
+
+  const handleCheckEmailVerified = async () => {
+    if (!pendingVerificationUser) return;
+    setAuthError(null);
+    setAuthNotice(null);
+    setIsCheckingVerification(true);
+    try {
+      await pendingVerificationUser.reload();
+      await pendingVerificationUser.getIdToken(true);
+      const refreshedUser = auth.currentUser ?? pendingVerificationUser;
+
+      if (refreshedUser.emailVerified) {
+        onAuthStart?.();
+        const profileData =
+          pendingCorporateOverride ?? loadPendingCorporateProfile(refreshedUser.uid);
+        await onFirebaseAuthSuccess(refreshedUser, 'customer', profileData);
+        return;
+      }
+
+      setAuthError(
+        'Email belum terverifikasi. Pastikan Anda sudah mengklik tautan verifikasi di kotak masuk atau folder Spam email Anda, lalu coba lagi.'
+      );
+    } catch (err) {
+      onAuthAbort?.();
+      setAuthError(mapFirebaseAuthError(err));
+    } finally {
+      setIsCheckingVerification(false);
+    }
+  };
+
+  const handleResendVerificationEmail = async () => {
+    if (!pendingVerificationUser) return;
+    setAuthError(null);
+    setAuthNotice(null);
+    setIsCheckingVerification(true);
+    try {
+      await sendEmailVerification(pendingVerificationUser, {
+        url: typeof window !== 'undefined' ? window.location.origin : 'https://smart-lims-sda.vercel.app',
+      });
+      setAuthNotice(
+        `Tautan verifikasi baru telah dikirim ulang ke ${pendingVerificationUser.email ?? 'email Anda'}.`
+      );
+    } catch (err) {
+      setAuthError(mapFirebaseAuthError(err));
+    } finally {
+      setIsCheckingVerification(false);
+    }
+  };
+
+  const handleCancelVerification = async () => {
+    setAuthError(null);
+    setAuthNotice(null);
+    try {
+      await signOut(auth);
+    } catch {
+      // Ignore signOut failure on fallback reset
+    }
+    setPendingVerificationUser(null);
+    setPendingCorporateOverride(undefined);
+    onAuthAbort?.();
+  };
 
   const handleRoleSwitch = (roleId: PortalRoleId) => {
     setSelectedRoleId(roleId);
@@ -141,34 +267,49 @@ export function LoginPage({
       return;
     }
 
-    const resolvedEmail = resolveIdentifierToEmail(cleanIdentifier);
-    const matchedSeed = DEMO_USERS.find(
-      (u) =>
-        u.email.toLowerCase() === resolvedEmail ||
-        u.username?.toLowerCase() === cleanIdentifier.toLowerCase()
-    );
-
-    if (matchedSeed) {
-      if (isCustomerRole && matchedSeed.roleId !== 'customer') {
-        setAuthError(
-          'Akun ini adalah akun internal laboratorium. Pilih portal Internal Lab di panel kiri.'
-        );
-        return;
-      }
-      if (!isCustomerRole && matchedSeed.roleId === 'customer') {
-        setAuthError(
-          'Akun pelanggan tidak memiliki akses ke portal internal laboratorium.'
-        );
-        return;
-      }
-    }
-
     onAuthStart?.();
     setIsAuthenticating(true);
+    let matchedSeed: DemoUser | undefined;
     try {
+      const resolvedEmail = await resolveLoginIdentifierToEmail(cleanIdentifier);
+      matchedSeed = DEMO_USERS.find(
+        (u) =>
+          u.email.toLowerCase() === resolvedEmail ||
+          u.username?.toLowerCase() === cleanIdentifier.toLowerCase()
+      );
+
+      if (matchedSeed) {
+        if (isCustomerRole && matchedSeed.roleId !== 'customer') {
+          onAuthAbort?.();
+          setIsAuthenticating(false);
+          setAuthError(
+            'Akun ini adalah akun internal laboratorium. Pilih portal Internal Lab di panel kiri.'
+          );
+          return;
+        }
+        if (!isCustomerRole && matchedSeed.roleId === 'customer') {
+          onAuthAbort?.();
+          setIsAuthenticating(false);
+          setAuthError(
+            'Akun pelanggan tidak memiliki akses ke portal internal laboratorium.'
+          );
+          return;
+        }
+      }
       const credential = await signInWithEmailAndPassword(auth, resolvedEmail, password);
+      if (!credential.user.emailVerified && !isSeededDemoEmail(credential.user.email)) {
+        await promptEmailVerification(
+          credential.user,
+          loadPendingCorporateProfile(credential.user.uid)
+        );
+        return;
+      }
       const effectiveRole = matchedSeed?.roleId ?? selectedRoleId;
-      await onFirebaseAuthSuccess(credential.user, effectiveRole);
+      await onFirebaseAuthSuccess(
+        credential.user,
+        effectiveRole,
+        matchedSeed ?? loadPendingCorporateProfile(credential.user.uid)
+      );
     } catch (err) {
       const code =
         typeof err === 'object' && err !== null && 'code' in err
@@ -219,9 +360,9 @@ export function LoginPage({
       return;
     }
 
-    const resolvedEmail = resolveIdentifierToEmail(cleanIdentifier);
     setIsAuthenticating(true);
     try {
+      const resolvedEmail = await resolveLoginIdentifierToEmail(cleanIdentifier);
       await sendPasswordResetEmail(auth, resolvedEmail);
       setAuthNotice(`Tautan reset kata sandi telah dikirim ke ${resolvedEmail}.`);
     } catch (err) {
@@ -231,49 +372,79 @@ export function LoginPage({
     }
   };
 
-  const executeGoogleCustomerSignIn = async (corporateOverride?: Partial<DemoUser>) => {
-    if (!isCustomerRole && !corporateOverride) return;
-    setAuthError(null);
-    setAuthNotice(null);
-    onAuthStart?.();
-    setIsAuthenticating(true);
-    try {
-      const credential = await signInWithPopup(auth, googleAuthProvider);
-      await onFirebaseAuthSuccess(credential.user, 'customer', corporateOverride);
-    } catch (err) {
-      onAuthAbort?.();
-      setAuthError(mapFirebaseAuthError(err));
-      setIsAuthenticating(false);
-    }
-  };
-
   const validateCorporateProfile = (): Partial<DemoUser> | null => {
-    if (companyName.trim().length < 3) {
-      setAuthError('Nama perusahaan atau badan usaha minimal 3 karakter.');
-      return null;
-    }
-    const digitsOnly = nibNumber.replace(/\D/g, '');
-    if (digitsOnly.length < 13) {
-      setAuthError('Nomor NIB / NPWP minimal terdiri dari 13 digit angka.');
-      return null;
-    }
-    if (picName.trim().length < 2) {
-      setAuthError('Masukkan nama lengkap penanggung jawab HSE.');
+    if (!regEmail.trim() || !regEmail.includes('@')) {
+      setAuthError('Masukkan alamat email perusahaan yang valid (wajib diisi untuk verifikasi).');
       return null;
     }
     const cleanUsername = regUsername.trim().toLowerCase();
-    if (cleanUsername && cleanUsername.length < 3) {
-      setAuthError('Username minimal terdiri dari 3 karakter.');
+    if (!cleanUsername) {
+      setAuthError('Username wajib diisi karena dapat digunakan untuk login.');
       return null;
     }
+    if (!isValidUsernameFormat(cleanUsername)) {
+      setAuthError(
+        'Username minimal 3 karakter dan hanya boleh menggunakan huruf kecil, angka, tanda hubung (-), atau garis bawah (_).'
+      );
+      return null;
+    }
+    if (regPassword.length < 6) {
+      setAuthError('Kata sandi akun minimal terdiri dari 6 karakter.');
+      return null;
+    }
+    if (!regConfirmPassword) {
+      setAuthError('Konfirmasi kata sandi wajib diisi untuk memverifikasi kata sandi.');
+      return null;
+    }
+    if (regPassword !== regConfirmPassword) {
+      setAuthError('Konfirmasi kata sandi tidak cocok dengan kata sandi yang dimasukkan.');
+      return null;
+    }
+    if (companyName.trim().length < 3) {
+      setAuthError('Nama badan usaha / perusahaan wajib diisi (minimal 3 karakter).');
+      return null;
+    }
+    const trimmedNib = nibNumber.trim();
+    if (trimmedNib) {
+      const digitsOnly = trimmedNib.replace(/\D/g, '');
+      if (digitsOnly.length < 13) {
+        setAuthError('Jika diisi, nomor NIB / NPWP minimal terdiri dari 13 digit angka.');
+        return null;
+      }
+    }
+    if (picName.trim().length < 2) {
+      setAuthError('Nama lengkap PJ Teknis (HSE) wajib diisi.');
+      return null;
+    }
+    if (!sectorId) {
+      setAuthError('Pilih sektor industri perusahaan terlebih dahulu.');
+      return null;
+    }
+    if (sectorId === 'lainnya' && customSector.trim().length < 3) {
+      setAuthError('Tuliskan sektor industri perusahaan Anda (minimal 3 karakter).');
+      return null;
+    }
+    const phoneDigits = picPhone.replace(/\D/g, '');
+    if (phoneDigits.length < 8) {
+      setAuthError('Nomor telepon / WhatsApp aktif wajib diisi (minimal 8 digit).');
+      return null;
+    }
+    if (siteAddress.trim().length < 5) {
+      setAuthError('Alamat lokasi pabrik / operasional wajib diisi.');
+      return null;
+    }
+
+    const resolvedSectorId =
+      sectorId === 'lainnya' ? customSector.trim().slice(0, 64) : sectorId;
+
     return {
-      username: cleanUsername || undefined,
+      username: cleanUsername,
       companyName: companyName.trim(),
-      nibOrNip: nibNumber.trim(),
-      sectorId,
+      nibOrNip: trimmedNib,
+      sectorId: resolvedSectorId,
       name: picName.trim(),
-      phone: picPhone.trim() || '0812-0000-0000',
-      address: siteAddress.trim() || 'Alamat operasional perusahaan terdaftar',
+      phone: picPhone.trim(),
+      address: siteAddress.trim(),
     };
   };
 
@@ -283,48 +454,43 @@ export function LoginPage({
     setAuthNotice(null);
 
     const profilePatch = validateCorporateProfile();
-    if (!profilePatch) return;
+    if (!profilePatch || !profilePatch.username) return;
 
-    if (!regEmail.trim() || !regEmail.includes('@')) {
-      setAuthError('Masukkan alamat email perusahaan yang valid.');
-      return;
-    }
-    if (regPassword.length < 6) {
-      setAuthError('Kata sandi minimal terdiri dari 6 karakter.');
-      return;
-    }
+    const normalizedEmail = regEmail.trim().toLowerCase();
+    const cleanUsername = profilePatch.username;
 
     onAuthStart?.();
     setIsAuthenticating(true);
     try {
+      const available = await checkUsernameAvailable(cleanUsername);
+      if (!available) {
+        onAuthAbort?.();
+        setIsAuthenticating(false);
+        setAuthError(
+          `Username "${cleanUsername}" sudah terdaftar. Silakan gunakan username lain.`
+        );
+        return;
+      }
+
       const cred = await createUserWithEmailAndPassword(
         auth,
-        regEmail.trim().toLowerCase(),
+        normalizedEmail,
         regPassword
       );
       await updateProfile(cred.user, { displayName: picName.trim() });
-      try {
-        await sendEmailVerification(cred.user);
-      } catch {
-        // Non-blocking courtesy verification email
-      }
-      await onFirebaseAuthSuccess(cred.user, 'customer', {
+      await registerUsernameLookup(cred.user.uid, cleanUsername, normalizedEmail);
+      const registeredProfile: Partial<DemoUser> = {
         ...profilePatch,
-        email: regEmail.trim().toLowerCase(),
-      });
+        email: normalizedEmail,
+      };
+      savePendingCorporateProfile(cred.user.uid, registeredProfile);
+      await promptEmailVerification(cred.user, registeredProfile);
+      return;
     } catch (err) {
       onAuthAbort?.();
       setAuthError(mapFirebaseAuthError(err));
       setIsAuthenticating(false);
     }
-  };
-
-  const handleRegisterWithGoogle = async () => {
-    setAuthError(null);
-    setAuthNotice(null);
-    const profilePatch = validateCorporateProfile();
-    if (!profilePatch) return;
-    await executeGoogleCustomerSignIn(profilePatch);
   };
 
   return (
@@ -457,68 +623,146 @@ export function LoginPage({
       {/* RIGHT PANEL: Production Role-Specific Auth */}
       <main className="flex flex-1 flex-col justify-center bg-white px-5 py-10 sm:px-10 lg:px-16">
         <div className="mx-auto w-full max-w-md">
-          <div>
-            <h2 className="font-display text-2xl font-bold tracking-tight text-slate-900">
-              {!isCustomerRole
-                ? 'Masuk Portal Internal Lab'
-                : authTab === 'login'
-                  ? 'Masuk Portal Pelanggan'
-                  : 'Registrasi Badan Usaha'}
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              {!isCustomerRole
-                ? 'Masuk menggunakan username atau email instansi untuk Admin Lab, Manajer Teknis, atau Kepala Balai'
-                : authTab === 'login'
-                  ? 'Masuk dengan Email / Username perusahaan atau akun Google Anda'
-                  : 'Daftarkan profil badan usaha dengan Email atau akun Google'}
-            </p>
-          </div>
+          {pendingVerificationUser ? (
+            <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-7">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700">
+                <Mail className="h-6 w-6" aria-hidden="true" />
+              </div>
 
-          {/* Only Customers can register publicly; Internal Lab roles use seeded credentials */}
-          {isCustomerRole && (
-            <div
-              role="tablist"
-              aria-label="Mode autentikasi pelanggan"
-              className="mt-6 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={authTab === 'login'}
-                onClick={() => {
-                  setAuthTab('login');
-                  setAuthError(null);
-                  setAuthNotice(null);
-                }}
-                className={`min-h-[40px] rounded-md px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
-                  authTab === 'login'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Masuk Akun
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={authTab === 'register'}
-                onClick={() => {
-                  setAuthTab('register');
-                  setAuthError(null);
-                  setAuthNotice(null);
-                }}
-                className={`min-h-[40px] rounded-md px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
-                  authTab === 'register'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Daftar Badan Usaha
-              </button>
+              <div>
+                <p className="font-mono text-xs font-medium text-cyan-700">
+                  Verifikasi Email Diperlukan
+                </p>
+                <h2 className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">
+                  Periksa Kotak Masuk Email Anda
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                  Kami telah mengirimkan tautan verifikasi ke{' '}
+                  <span className="font-semibold text-slate-900">
+                    {pendingVerificationUser.email}
+                  </span>
+                  . Klik tautan pada email tersebut untuk mengaktifkan akses portal pelanggan.
+                </p>
+              </div>
+
+              {authNotice && (
+                <div
+                  role="status"
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-medium text-emerald-900"
+                >
+                  {authNotice}
+                </div>
+              )}
+
+              {authError && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-medium text-rose-800"
+                >
+                  {authError}
+                </div>
+              )}
+
+              <div className="space-y-2.5 pt-1">
+                <button
+                  type="button"
+                  disabled={isCheckingVerification}
+                  onClick={handleCheckEmailVerified}
+                  className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:bg-slate-400 cursor-pointer"
+                >
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" aria-hidden="true" />
+                  <span>
+                    {isCheckingVerification
+                      ? 'Memeriksa Status Verifikasi...'
+                      : 'Saya Sudah Verifikasi — Masuk Portal'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isCheckingVerification}
+                  onClick={handleResendVerificationEmail}
+                  className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 text-slate-600" aria-hidden="true" />
+                  <span>Kirim Ulang Email Verifikasi</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isCheckingVerification}
+                  onClick={handleCancelVerification}
+                  className="flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Ganti Akun / Kembali ke Halaman Login</span>
+                </button>
+              </div>
             </div>
-          )}
+          ) : (
+            <>
+              <div>
+                <h2 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+                  {!isCustomerRole
+                    ? 'Masuk Portal Internal Lab'
+                    : authTab === 'login'
+                      ? 'Masuk Portal Pelanggan'
+                      : 'Registrasi Badan Usaha'}
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {!isCustomerRole
+                    ? 'Masuk menggunakan username atau email instansi untuk Admin Lab, Manajer Teknis, atau Kepala Balai'
+                    : authTab === 'login'
+                      ? 'Masuk menggunakan username atau email badan usaha yang telah terdaftar dan terverifikasi'
+                      : 'Lengkapi profil badan usaha dan verifikasi alamat email Anda untuk membuat akun pelanggan'}
+                </p>
+              </div>
 
-          {authTab === 'login' || !isCustomerRole ? (
+              {/* Only Customers can register publicly; Internal Lab roles use seeded credentials */}
+              {isCustomerRole && (
+                <div
+                  role="tablist"
+                  aria-label="Mode autentikasi pelanggan"
+                  className="mt-6 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={authTab === 'login'}
+                    onClick={() => {
+                      setAuthTab('login');
+                      setAuthError(null);
+                      setAuthNotice(null);
+                    }}
+                    className={`min-h-[40px] rounded-md px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+                      authTab === 'login'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Masuk Akun
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={authTab === 'register'}
+                    onClick={() => {
+                      setAuthTab('register');
+                      setAuthError(null);
+                      setAuthNotice(null);
+                    }}
+                    className={`min-h-[40px] rounded-md px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+                      authTab === 'register'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Daftar Badan Usaha
+                  </button>
+                </div>
+              )}
+
+              {authTab === 'login' || !isCustomerRole ? (
             <div className="mt-6 space-y-5">
               <form onSubmit={handleCredentialLogin} noValidate className="space-y-4">
                 <div>
@@ -624,79 +868,48 @@ export function LoginPage({
                 </button>
               </form>
 
-              {/* Google Sign-In option ONLY for Pelanggan / HSE */}
-              {isCustomerRole && (
-                <>
-                  <div className="relative flex items-center py-1">
-                    <div className="flex-grow border-t border-slate-200" />
-                    <span className="mx-3 shrink-0 text-xs text-slate-400">
-                      atau masuk dengan Google
-                    </span>
-                    <div className="flex-grow border-t border-slate-200" />
-                  </div>
-
+              {isCustomerRole ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-600">
+                  <p>
+                    Pelanggan yang belum memiliki akun wajib mendaftar melalui tab{' '}
+                    <span className="font-semibold text-slate-800">Daftar Badan Usaha</span> dan
+                    memverifikasi tautan yang dikirim ke kotak masuk email yang didaftarkan.
+                  </p>
                   <button
                     type="button"
-                    disabled={isAuthenticating}
-                    onClick={() => executeGoogleCustomerSignIn()}
-                    className="flex min-h-[46px] w-full items-center justify-center gap-2.5 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
+                    onClick={() => {
+                      setAuthTab('register');
+                      setAuthError(null);
+                      setAuthNotice(null);
+                    }}
+                    className="mt-2 font-semibold text-cyan-700 hover:underline cursor-pointer"
                   >
-                    <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-                      <path
-                        fill="#4285F4"
-                        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
-                      />
-                    </svg>
-                    <span>Masuk dengan Google (Pelanggan)</span>
+                    Belum punya akun? Daftar Badan Usaha sekarang →
                   </button>
-                </>
-              )}
-
-              {!isCustomerRole && (
+                </div>
+              ) : (
                 <p className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-600">
-                  Akses internal laboratorium menggunakan akun ter-seed di database tanpa autentikasi
-                  Google publik.
+                  Akses internal laboratorium menggunakan akun instansi ter-seed di database.
                 </p>
               )}
             </div>
           ) : (
-            /* Customer Corporate Registration (Email/Password OR Google) */
+            /* Customer Corporate Registration (Email/Password + Mandatory Email Verification) */
             <form onSubmit={handleRegisterWithEmail} noValidate className="mt-6 space-y-3.5">
+              <div className="flex items-center justify-between rounded-lg border border-cyan-100 bg-cyan-50/70 px-3 py-2 text-[11px] text-slate-700">
+                <span>
+                  Kolom bertanda <span className="font-bold text-rose-600">*</span> wajib diisi.
+                </span>
+                <span className="font-medium text-cyan-800">Verifikasi via Email</span>
+              </div>
+
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label
-                    htmlFor="reg-username"
-                    className="block text-xs font-semibold text-slate-700"
-                  >
-                    Username
-                  </label>
-                  <input
-                    id="reg-username"
-                    type="text"
-                    value={regUsername}
-                    onChange={(e) => setRegUsername(e.target.value)}
-                    placeholder="cth: hse_perusahaan"
-                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20"
-                  />
-                </div>
                 <div>
                   <label
                     htmlFor="reg-email"
                     className="block text-xs font-semibold text-slate-700"
                   >
-                    Email Perusahaan
+                    Email Perusahaan <span className="text-rose-600" aria-hidden="true">*</span>
                   </label>
                   <div className="relative mt-1">
                     <Mail
@@ -706,6 +919,8 @@ export function LoginPage({
                     <input
                       id="reg-email"
                       type="email"
+                      required
+                      aria-required="true"
                       value={regEmail}
                       onChange={(e) => setRegEmail(e.target.value)}
                       placeholder="hse@perusahaan.co.id"
@@ -713,41 +928,125 @@ export function LoginPage({
                     />
                   </div>
                 </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="reg-password"
-                  className="block text-xs font-semibold text-slate-700"
-                >
-                  Kata Sandi Akun (minimal 6 karakter)
-                </label>
-                <div className="relative mt-1">
-                  <input
-                    id="reg-password"
-                    type={showRegPassword ? 'text' : 'password'}
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    placeholder="Buat kata sandi"
-                    className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white py-2 pr-10 pl-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowRegPassword((p) => !p)}
-                    aria-label={showRegPassword ? 'Sembunyikan kata sandi' : 'Lihat kata sandi'}
-                    className="absolute top-1/2 right-3 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                <div>
+                  <label
+                    htmlFor="reg-username"
+                    className="block text-xs font-semibold text-slate-700"
                   >
-                    {showRegPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
+                    Username <span className="text-rose-600" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="reg-username"
+                    type="text"
+                    required
+                    aria-required="true"
+                    value={regUsername}
+                    onChange={(e) =>
+                      setRegUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))
+                    }
+                    placeholder="cth: hse_perusahaan"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20"
+                  />
                 </div>
               </div>
+              <p className="!mt-1 text-[11px] text-slate-500">
+                Tautan verifikasi dikirim ke email di atas. Username (huruf kecil/angka/<code className="font-mono">_</code>/<code className="font-mono">-</code>) dapat dipakai untuk login.
+              </p>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="reg-password"
+                    className="block text-xs font-semibold text-slate-700"
+                  >
+                    Kata Sandi (min. 6 karakter){' '}
+                    <span className="text-rose-600" aria-hidden="true">*</span>
+                  </label>
+                  <div className="relative mt-1">
+                    <input
+                      id="reg-password"
+                      type={showRegPassword ? 'text' : 'password'}
+                      required
+                      aria-required="true"
+                      autoComplete="new-password"
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value)}
+                      placeholder="Buat kata sandi"
+                      className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white py-2 pr-10 pl-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegPassword((p) => !p)}
+                      aria-label={showRegPassword ? 'Sembunyikan kata sandi' : 'Lihat kata sandi'}
+                      className="absolute top-1/2 right-3 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    >
+                      {showRegPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="reg-confirm-password"
+                    className="block text-xs font-semibold text-slate-700"
+                  >
+                    Konfirmasi Kata Sandi{' '}
+                    <span className="text-rose-600" aria-hidden="true">*</span>
+                  </label>
+                  <div className="relative mt-1">
+                    <input
+                      id="reg-confirm-password"
+                      type={showRegConfirmPassword ? 'text' : 'password'}
+                      required
+                      aria-required="true"
+                      autoComplete="new-password"
+                      value={regConfirmPassword}
+                      onChange={(e) => setRegConfirmPassword(e.target.value)}
+                      placeholder="Ulangi kata sandi"
+                      className={`min-h-[42px] w-full rounded-lg border bg-white py-2 pr-10 pl-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
+                        regConfirmPassword && regPassword !== regConfirmPassword
+                          ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20'
+                          : 'border-slate-300 focus:border-cyan-600 focus:ring-cyan-600/20'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegConfirmPassword((p) => !p)}
+                      aria-label={
+                        showRegConfirmPassword
+                          ? 'Sembunyikan konfirmasi kata sandi'
+                          : 'Lihat konfirmasi kata sandi'
+                      }
+                      className="absolute top-1/2 right-3 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    >
+                      {showRegConfirmPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {regConfirmPassword && (
+                <p
+                  className={`!mt-1 text-[11px] font-medium ${
+                    regPassword === regConfirmPassword ? 'text-emerald-700' : 'text-rose-600'
+                  }`}
+                >
+                  {regPassword === regConfirmPassword
+                    ? 'Kata sandi cocok.'
+                    : 'Konfirmasi kata sandi belum cocok.'}
+                </p>
+              )}
 
               <div>
                 <label
                   htmlFor="reg-company"
                   className="block text-xs font-semibold text-slate-700"
                 >
-                  Nama Badan Usaha / Perusahaan
+                  Nama Badan Usaha / Perusahaan{' '}
+                  <span className="text-rose-600" aria-hidden="true">*</span>
                 </label>
                 <div className="relative mt-1">
                   <Building2
@@ -757,6 +1056,8 @@ export function LoginPage({
                   <input
                     id="reg-company"
                     type="text"
+                    required
+                    aria-required="true"
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
                     placeholder="Contoh: PT Nusantara Manufaktur Sejahtera"
@@ -771,7 +1072,8 @@ export function LoginPage({
                     htmlFor="reg-nib"
                     className="block text-xs font-semibold text-slate-700"
                   >
-                    Nomor NIB / NPWP
+                    Nomor NIB / NPWP{' '}
+                    <span className="font-normal text-slate-400">(Opsional)</span>
                   </label>
                   <input
                     id="reg-nib"
@@ -779,7 +1081,7 @@ export function LoginPage({
                     inputMode="numeric"
                     value={nibNumber}
                     onChange={(e) => setNibNumber(e.target.value)}
-                    placeholder="13 – 16 digit"
+                    placeholder="13 – 16 digit (jika ada)"
                     className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20"
                   />
                 </div>
@@ -789,11 +1091,14 @@ export function LoginPage({
                     htmlFor="reg-pic"
                     className="block text-xs font-semibold text-slate-700"
                   >
-                    Nama PJ Teknis (HSE)
+                    Nama PJ Teknis (HSE){' '}
+                    <span className="text-rose-600" aria-hidden="true">*</span>
                   </label>
                   <input
                     id="reg-pic"
                     type="text"
+                    required
+                    aria-required="true"
                     value={picName}
                     onChange={(e) => setPicName(e.target.value)}
                     placeholder="Nama lengkap PJ"
@@ -807,25 +1112,59 @@ export function LoginPage({
                   htmlFor="reg-sector"
                   className="block text-xs font-semibold text-slate-700"
                 >
-                  Sektor Industri
+                  Sektor Industri <span className="text-rose-600" aria-hidden="true">*</span>
                 </label>
                 <select
                   id="reg-sector"
+                  required
+                  aria-required="true"
                   value={sectorId}
                   onChange={(e) => setSectorId(e.target.value)}
-                  className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20"
+                  className={`mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20 ${
+                    sectorId ? 'text-slate-900' : 'text-slate-400'
+                  }`}
                 >
+                  <option value="" disabled>
+                    -- Pilih Sektor Industri --
+                  </option>
                   {INDUSTRY_SECTORS.map((sector) => (
-                    <option key={sector.id} value={sector.id}>
+                    <option key={sector.id} value={sector.id} className="text-slate-900">
                       {sector.label}
                     </option>
                   ))}
+                  <option value="lainnya" className="text-slate-900">
+                    Lainnya (Isi Sendiri / Kustom)
+                  </option>
                 </select>
-                <p className="mt-1 text-xs text-slate-500">
-                  Rekomendasi parameter terkait:{' '}
-                  <span className="font-medium text-slate-700">{activeSector.extraParam}</span>
-                </p>
+                {activeSector && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Rekomendasi parameter terkait:{' '}
+                    <span className="font-medium text-slate-700">{activeSector.extraParam}</span>
+                  </p>
+                )}
               </div>
+
+              {sectorId === 'lainnya' && (
+                <div>
+                  <label
+                    htmlFor="reg-custom-sector"
+                    className="block text-xs font-semibold text-slate-700"
+                  >
+                    Sebutkan Sektor Industri{' '}
+                    <span className="text-rose-600" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="reg-custom-sector"
+                    type="text"
+                    required
+                    aria-required="true"
+                    value={customSector}
+                    onChange={(e) => setCustomSector(e.target.value)}
+                    placeholder="Contoh: Industri Kimia, Farmasi, Pengolahan Limbah B3"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-cyan-300 bg-cyan-50/30 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20"
+                  />
+                </div>
+              )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -833,11 +1172,14 @@ export function LoginPage({
                     htmlFor="reg-phone"
                     className="block text-xs font-semibold text-slate-700"
                   >
-                    Nomor Telepon / WA
+                    Nomor Telepon / WA{' '}
+                    <span className="text-rose-600" aria-hidden="true">*</span>
                   </label>
                   <input
                     id="reg-phone"
                     type="text"
+                    required
+                    aria-required="true"
                     value={picPhone}
                     onChange={(e) => setPicPhone(e.target.value)}
                     placeholder="0812-xxxx-xxxx"
@@ -849,11 +1191,14 @@ export function LoginPage({
                     htmlFor="reg-address"
                     className="block text-xs font-semibold text-slate-700"
                   >
-                    Alamat Lokasi Pabrik
+                    Alamat Lokasi Pabrik{' '}
+                    <span className="text-rose-600" aria-hidden="true">*</span>
                   </label>
                   <input
                     id="reg-address"
                     type="text"
+                    required
+                    aria-required="true"
                     value={siteAddress}
                     onChange={(e) => setSiteAddress(e.target.value)}
                     placeholder="Kawasan Industri / Kota"
@@ -871,7 +1216,7 @@ export function LoginPage({
                 </div>
               )}
 
-              <div className="space-y-2.5 pt-1">
+              <div className="pt-1">
                 <button
                   type="submit"
                   disabled={isAuthenticating}
@@ -880,22 +1225,14 @@ export function LoginPage({
                   <Mail className="h-4 w-4 text-cyan-400" aria-hidden="true" />
                   <span>
                     {isAuthenticating
-                      ? 'Mendaftarkan Akun...'
-                      : 'Daftar dengan Email & Kata Sandi'}
+                      ? 'Mendaftarkan Akun & Mengirim Verifikasi...'
+                      : 'Daftar & Kirim Email Verifikasi'}
                   </span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isAuthenticating}
-                  onClick={handleRegisterWithGoogle}
-                  className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
-                >
-                  <KeyRound className="h-3.5 w-3.5 text-slate-600" aria-hidden="true" />
-                  <span>Simpan Profil &amp; Daftar dengan Google</span>
                 </button>
               </div>
             </form>
+          )}
+            </>
           )}
         </div>
       </main>

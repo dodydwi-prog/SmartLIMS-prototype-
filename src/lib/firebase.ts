@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { GoogleAuthProvider, getAuth } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -20,7 +20,6 @@ const resolvedDatabaseId =
 const app = initializeApp(resolvedFirebaseConfig);
 export const db = getFirestore(app, resolvedDatabaseId);
 export const auth = getAuth(app);
-export const googleAuthProvider = new GoogleAuthProvider();
 
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'dwiputradody@gmail.com';
 export const BOOTSTRAPPED_ADMIN_EMAILS = [

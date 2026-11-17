@@ -19,6 +19,7 @@ import {
   INITIAL_CALENDAR_DAYS,
   INITIAL_SAMPLING_REQUESTS,
   SAMPLER_TEAMS,
+  resolveIdentifierToEmail,
 } from '../data/limsMockDatabase';
 import { PortalRoleId } from '../data/limsPreviewData';
 import {
@@ -76,6 +77,142 @@ export async function checkIsAdminUser(firebaseUser: User): Promise<boolean> {
   }
 }
 
+const PENDING_CORPORATE_STORAGE_PREFIX = 'smartlims_pending_corporate_';
+const USERNAME_CACHE_KEY = 'smartlims_username_email_cache';
+
+export function isValidUsernameFormat(username: string): boolean {
+  return /^[a-z0-9_-]{3,64}$/.test(username.trim().toLowerCase());
+}
+
+function saveLocalUsernameEmail(username: string, email: string): void {
+  try {
+    const raw = localStorage.getItem(USERNAME_CACHE_KEY);
+    const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    map[username.toLowerCase()] = email.toLowerCase();
+    localStorage.setItem(USERNAME_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function loadLocalUsernameEmail(username: string): string | null {
+  try {
+    const raw = localStorage.getItem(USERNAME_CACHE_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw) as Record<string, string>;
+    return map[username.toLowerCase()] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function checkUsernameAvailable(username: string): Promise<boolean> {
+  const clean = username.trim().toLowerCase();
+  if (!isValidUsernameFormat(clean)) return false;
+  if (DEMO_USERS.some((u) => u.username?.toLowerCase() === clean)) {
+    return false;
+  }
+  try {
+    const snap = await getDoc(doc(db, 'usernames', clean));
+    return !snap.exists();
+  } catch {
+    return true;
+  }
+}
+
+export async function registerUsernameLookup(
+  uid: string,
+  username: string,
+  email: string
+): Promise<void> {
+  const clean = username.trim().toLowerCase();
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!isValidUsernameFormat(clean) || !normalizedEmail) return;
+
+  saveLocalUsernameEmail(clean, normalizedEmail);
+  try {
+    const ref = doc(db, 'usernames', clean);
+    const existing = await getDoc(ref);
+    if (!existing.exists()) {
+      await setDoc(ref, {
+        uid,
+        username: clean,
+        email: normalizedEmail,
+        createdAt: serverTimestamp(),
+      });
+    }
+  } catch (err) {
+    console.warn('Unable to index username lookup:', err);
+  }
+}
+
+export async function resolveLoginIdentifierToEmail(
+  identifier: string
+): Promise<string> {
+  const clean = identifier.trim().toLowerCase();
+  if (!clean) return '';
+  if (clean.includes('@')) return clean;
+
+  const matchedSeed = DEMO_USERS.find(
+    (u) => u.username?.toLowerCase() === clean
+  );
+  if (matchedSeed) return matchedSeed.email.toLowerCase();
+
+  if (isValidUsernameFormat(clean)) {
+    try {
+      const snap = await getDoc(doc(db, 'usernames', clean));
+      if (snap.exists()) {
+        const emailVal = String(snap.data().email || '').trim().toLowerCase();
+        if (emailVal) {
+          saveLocalUsernameEmail(clean, emailVal);
+          return emailVal;
+        }
+      }
+    } catch {
+      // Fall through to local cache / fallback
+    }
+  }
+
+  const cached = loadLocalUsernameEmail(clean);
+  if (cached) return cached;
+
+  return resolveIdentifierToEmail(clean);
+}
+
+export function savePendingCorporateProfile(
+  uid: string,
+  profile: Partial<DemoUser>
+): void {
+  try {
+    localStorage.setItem(
+      `${PENDING_CORPORATE_STORAGE_PREFIX}${uid}`,
+      JSON.stringify(profile)
+    );
+  } catch {
+    // Ignore storage unavailability
+  }
+}
+
+export function loadPendingCorporateProfile(
+  uid: string
+): Partial<DemoUser> | undefined {
+  try {
+    const raw = localStorage.getItem(`${PENDING_CORPORATE_STORAGE_PREFIX}${uid}`);
+    if (!raw) return undefined;
+    return JSON.parse(raw) as Partial<DemoUser>;
+  } catch {
+    return undefined;
+  }
+}
+
+export function clearPendingCorporateProfile(uid: string): void {
+  try {
+    localStorage.removeItem(`${PENDING_CORPORATE_STORAGE_PREFIX}${uid}`);
+  } catch {
+    // Ignore storage unavailability
+  }
+}
+
 export async function syncAndLoadUserProfile(
   firebaseUser: User,
   desiredRole: PortalRoleId,
@@ -90,10 +227,12 @@ export async function syncAndLoadUserProfile(
     (u) => u.email.toLowerCase() === normalizedEmail
   );
 
+  const effectiveOverride =
+    corporateOverride ?? loadPendingCorporateProfile(firebaseUser.uid);
+
   try {
     const snap = await getDoc(userRef);
-    const defaultTemplate =
-      matchedSeedUser ?? (isAdmin ? DEMO_USERS[1] : DEMO_USERS[0]);
+    const seedTemplate = matchedSeedUser ?? (isAdmin ? DEMO_USERS[1] : undefined);
     const effectiveRole: PortalRoleId = isAdmin
       ? matchedSeedUser?.roleId ?? desiredRole
       : 'customer';
@@ -101,11 +240,12 @@ export async function syncAndLoadUserProfile(
     if (!snap.exists()) {
       const profilePayload: Record<string, unknown> = {
         uid: firebaseUser.uid,
-        email: (firebaseUser.email || defaultTemplate.email).slice(0, 200),
+        email: (firebaseUser.email || seedTemplate?.email || '').slice(0, 200),
         name: (
-          corporateOverride?.name ||
+          effectiveOverride?.name ||
           firebaseUser.displayName ||
-          defaultTemplate.name
+          seedTemplate?.name ||
+          'Penanggung Jawab HSE'
         ).slice(0, 150),
         role: effectiveRole,
         roleTitle: (
@@ -113,25 +253,36 @@ export async function syncAndLoadUserProfile(
           (isAdmin ? 'Admin Lab & Koordinator Kaji Ulang' : 'Pelanggan / HSE Officer')
         ).slice(0, 120),
         companyName: (
-          corporateOverride?.companyName || defaultTemplate.companyName
+          effectiveOverride?.companyName ||
+          seedTemplate?.companyName ||
+          'Badan Usaha Terdaftar'
         ).slice(0, 200),
-        nibOrNip: (corporateOverride?.nibOrNip || defaultTemplate.nibOrNip).slice(0, 64),
-        sectorId: (corporateOverride?.sectorId || defaultTemplate.sectorId || 'tekstil').slice(
+        nibOrNip: (effectiveOverride?.nibOrNip || seedTemplate?.nibOrNip || '').slice(0, 64),
+        sectorId: (effectiveOverride?.sectorId || seedTemplate?.sectorId || '').slice(
           0,
           64
         ),
-        phone: (corporateOverride?.phone || defaultTemplate.phone).slice(0, 40),
-        address: (corporateOverride?.address || defaultTemplate.address).slice(0, 300),
+        phone: (effectiveOverride?.phone || seedTemplate?.phone || '').slice(0, 40),
+        address: (effectiveOverride?.address || seedTemplate?.address || '').slice(0, 300),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
 
-      const usernameVal = corporateOverride?.username || defaultTemplate.username;
+      const usernameVal = effectiveOverride?.username || seedTemplate?.username;
       if (usernameVal && usernameVal.length >= 3) {
         profilePayload.username = usernameVal.slice(0, 64);
       }
 
       await setDoc(userRef, profilePayload);
+      clearPendingCorporateProfile(firebaseUser.uid);
+
+      if (usernameVal && isValidUsernameFormat(usernameVal)) {
+        await registerUsernameLookup(
+          firebaseUser.uid,
+          usernameVal,
+          String(profilePayload.email)
+        );
+      }
 
       if (isBootstrappedAdminUser(firebaseUser)) {
         await setDoc(doc(db, 'admins', firebaseUser.uid), {
@@ -160,6 +311,7 @@ export async function syncAndLoadUserProfile(
       };
     }
 
+    clearPendingCorporateProfile(firebaseUser.uid);
     const existing = snap.data();
     const resolvedRole = (existing.role as PortalRoleId) || effectiveRole;
     return {
@@ -169,14 +321,18 @@ export async function syncAndLoadUserProfile(
         username: existing.username ? String(existing.username) : matchedSeedUser?.username,
         email: String(existing.email || firebaseUser.email || ''),
         password: '',
-        name: String(existing.name || firebaseUser.displayName || defaultTemplate.name),
+        name: String(existing.name || firebaseUser.displayName || seedTemplate?.name || ''),
         roleId: resolvedRole,
-        roleTitle: String(existing.roleTitle || defaultTemplate.roleTitle),
-        companyName: String(existing.companyName || defaultTemplate.companyName),
-        nibOrNip: String(existing.nibOrNip || defaultTemplate.nibOrNip),
-        sectorId: String(existing.sectorId || defaultTemplate.sectorId || 'tekstil'),
-        phone: String(existing.phone || defaultTemplate.phone),
-        address: String(existing.address || defaultTemplate.address),
+        roleTitle: String(
+          existing.roleTitle ||
+            seedTemplate?.roleTitle ||
+            'Pelanggan / HSE Officer'
+        ),
+        companyName: String(existing.companyName || seedTemplate?.companyName || ''),
+        nibOrNip: String(existing.nibOrNip || seedTemplate?.nibOrNip || ''),
+        sectorId: String(existing.sectorId || seedTemplate?.sectorId || ''),
+        phone: String(existing.phone || seedTemplate?.phone || ''),
+        address: String(existing.address || seedTemplate?.address || ''),
       },
     };
   } catch (error) {

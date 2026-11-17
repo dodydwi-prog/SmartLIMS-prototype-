@@ -197,7 +197,11 @@ export function CustomerPortal({
           <div className="px-2 pb-2">
             <p className="truncate text-xs font-semibold text-white">{currentUser.companyName}</p>
             <p className="truncate font-mono text-[11px] text-slate-400">
-              NIB {currentUser.nibOrNip}
+              {currentUser.nibOrNip
+                ? `NIB ${currentUser.nibOrNip}`
+                : currentUser.username
+                  ? `@${currentUser.username}`
+                  : currentUser.email}
             </p>
           </div>
           <button
