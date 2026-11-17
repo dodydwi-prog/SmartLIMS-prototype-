@@ -149,7 +149,7 @@ export function CustomerPortal({
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900">
       {/* Desktop Sidebar (#0F172A Deep Slate Navy) */}
-      <aside className="hidden w-64 shrink-0 flex-col justify-between bg-slate-900 text-slate-100 lg:flex">
+      <aside className="hidden w-64 shrink-0 flex-col justify-between bg-slate-900 text-slate-100 lg:sticky lg:top-0 lg:flex lg:h-screen lg:overflow-y-auto">
         <div>
           <div className="flex h-16 items-center border-b border-slate-800 px-6">
             <span className="font-display text-lg font-bold tracking-tight text-white">
