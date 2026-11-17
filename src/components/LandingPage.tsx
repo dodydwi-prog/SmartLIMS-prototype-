@@ -1,5 +1,13 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
+  motion,
+  useReducedMotion,
+  useScroll,
+  useSpring,
+  useTransform,
+} from 'motion/react';
+import {
+  ArrowDown,
   ArrowRight,
   CalendarDays,
   Check,
@@ -18,6 +26,7 @@ import {
   REGULATION_PRESETS,
   formatRupiah,
 } from '../data/limsPreviewData';
+import { ErlenmeyerReaction } from './ErlenmeyerReaction';
 import { Navbar } from './Navbar';
 
 interface LandingPageProps {
@@ -25,6 +34,39 @@ interface LandingPageProps {
 }
 
 export function LandingPage({ onNavigateLogin }: LandingPageProps) {
+  const shouldReduceMotion = useReducedMotion();
+  const heroRef = useRef<HTMLElement>(null);
+  const simulasiRef = useRef<HTMLElement>(null);
+  const workflowRef = useRef<HTMLDivElement>(null);
+
+  const { scrollYProgress } = useScroll();
+  const smoothScrollProgress = useSpring(scrollYProgress, {
+    stiffness: 160,
+    damping: 26,
+    restDelta: 0.001,
+  });
+
+  const { scrollYProgress: heroScrollProgress } = useScroll({
+    target: heroRef,
+    offset: ['start start', 'end start'],
+  });
+  const heroLeftY = useTransform(heroScrollProgress, [0, 1], [0, 10]);
+  const heroRightY = useTransform(heroScrollProgress, [0, 1], [0, -14]);
+
+  const { scrollYProgress: simulasiScrollProgress } = useScroll({
+    target: simulasiRef,
+    offset: ['start 90%', 'end 15%'],
+  });
+
+  const { scrollYProgress: workflowProgress } = useScroll({
+    target: workflowRef,
+    offset: ['start 85%', 'end 58%'],
+  });
+  const workflowLineScale = useSpring(workflowProgress, {
+    stiffness: 140,
+    damping: 24,
+  });
+
   // Interactive Hero Calculator state
   const [selectedPresetId, setSelectedPresetId] = useState<string>(REGULATION_PRESETS[0].id);
   const [pointCount, setPointCount] = useState<number>(2);
@@ -76,39 +118,72 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
     <div id="beranda" className="min-h-screen bg-slate-50 text-slate-900">
       <Navbar onNavigateLogin={() => onNavigateLogin('customer')} />
 
+      {/* Scroll-Driven Reading Progress Line */}
+      {!shouldReduceMotion && (
+        <motion.div
+          aria-hidden="true"
+          style={{ scaleX: smoothScrollProgress }}
+          className="pointer-events-none fixed top-16 right-0 left-0 z-50 h-[2px] origin-left bg-gradient-to-r from-cyan-500 via-sky-500 to-emerald-500"
+        />
+      )}
+
       <main>
-        {/* HERO SECTION */}
-        <section className="border-b border-slate-200 bg-white">
+        {/* HERO SLIDE 1: SLIDE JUDUL */}
+        <section
+          ref={heroRef}
+          className="overflow-hidden border-b border-slate-200 bg-white"
+        >
           <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-            <div className="grid grid-cols-1 items-stretch gap-12 lg:grid-cols-12 lg:gap-10">
-              {/* Hero Left: Proposition & Primary Action */}
-              <div className="flex flex-col justify-between lg:col-span-6">
-                <div>
-                  <p className="font-mono text-xs tracking-wide text-slate-500">
-                    ISO/IEC 17025:2017 · Klausul 7.1 · Pengambilan Contoh Uji Terintegrasi
+            <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12 lg:gap-12">
+              {/* Slide 1 Left: Title & Value Proposition */}
+              <motion.div
+                initial={shouldReduceMotion ? false : { opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.45, ease: 'easeOut' }}
+                style={shouldReduceMotion ? undefined : { y: heroLeftY }}
+                className="lg:col-span-7"
+              >
+                <p className="font-mono text-xs tracking-wide text-slate-500">
+                  ISO/IEC 17025:2017 · Klausul 7.1 · Pengambilan Contoh Uji Terintegrasi
+                </p>
+
+                <h1
+                  className="mt-4 font-display font-bold tracking-tight text-slate-900 text-balance"
+                  style={{ fontSize: 'clamp(2.25rem, 3.8vw, 3.5rem)', lineHeight: 1.08 }}
+                >
+                  Permohonan Sampling Lingkungan Cepat, Presisi, dan Terstandar.
+                </h1>
+
+                <p className="mt-6 max-w-2xl text-base leading-relaxed text-slate-600 sm:text-lg">
+                  Platform mandiri untuk pengajuan pengambilan contoh uji air limbah, udara ambien,
+                  emisi cerobong, dan air bersih. Terhubung langsung dengan database baku mutu
+                  regulasi, kuota tim bersertifikat BNSP, serta penerbitan draf SPH dan dokumen
+                  Kaji Ulang Permintaan.
+                </p>
+              </motion.div>
+
+              {/* Slide 1 Right: Primary Actions Placed on the Right Side */}
+              <motion.div
+                initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.08, ease: 'easeOut' }}
+                style={shouldReduceMotion ? undefined : { y: heroRightY }}
+                className="lg:col-span-5"
+              >
+                <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-6 sm:p-7">
+                  <p className="font-display text-sm font-semibold text-slate-900">
+                    Mulai Pengajuan atau Tinjau Regulasi
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                    Masuk ke portal pengajuan sampling 5 langkah atau periksa parameter baku mutu SNI
+                    yang berlaku.
                   </p>
 
-                  <h1
-                    className="mt-4 font-display font-bold tracking-tight text-slate-900 text-balance"
-                    style={{ fontSize: 'clamp(2.25rem, 3.8vw, 3.35rem)', lineHeight: 1.1 }}
-                  >
-                    Permohonan Sampling Lingkungan Cepat, Presisi, dan Terstandar.
-                  </h1>
-
-                  <p className="mt-6 max-w-xl text-base leading-relaxed text-slate-600 sm:text-lg">
-                    Platform mandiri untuk pengajuan pengambilan contoh uji air limbah, udara
-                    ambien, emisi cerobong, dan air bersih. Terhubung langsung dengan database baku
-                    mutu regulasi, kuota tim bersertifikat BNSP, serta penerbitan draf SPH dan
-                    dokumen Kaji Ulang Permintaan.
-                  </p>
-                </div>
-
-                <div className="mt-10">
-                  <div className="flex flex-wrap items-center gap-4">
+                  <div className="mt-5 flex flex-col gap-3">
                     <button
                       type="button"
                       onClick={() => onNavigateLogin('customer')}
-                      className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition-colors duration-150 hover:bg-slate-800 active:bg-slate-950 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 cursor-pointer"
+                      className="inline-flex min-h-[46px] w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition-colors duration-150 hover:bg-slate-800 active:bg-slate-950 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 cursor-pointer"
                     >
                       <span>Masuk ke Portal Permohonan</span>
                       <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -117,20 +192,120 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                     <button
                       type="button"
                       onClick={() => scrollToSection('#regulasi')}
-                      className="inline-flex min-h-[44px] items-center justify-center rounded-lg px-4 py-3 text-sm font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-900 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 cursor-pointer"
+                      className="inline-flex min-h-[46px] w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-800 transition-colors duration-150 hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 cursor-pointer"
                     >
                       Lihat Katalog Baku Mutu
                     </button>
                   </div>
 
-                  <p className="mt-4 text-xs text-slate-500">
-                    Mendukung akses Pelanggan HSE Perusahaan, Admin Lab, Manajer Teknis, dan Kepala Balai.
-                  </p>
+                  <div className="mt-5 border-t border-slate-200/90 pt-4">
+                    <p className="text-xs leading-relaxed text-slate-500">
+                      Mendukung akses Pelanggan HSE Perusahaan, Admin Lab, Manajer Teknis, dan Kepala
+                      Balai.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => scrollToSection('#simulasi-baku-mutu')}
+                      className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-700 transition-colors hover:text-cyan-800 cursor-pointer"
+                    >
+                      <span>Buka Simulasi Pengikatan Baku Mutu</span>
+                      <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </motion.div>
+            </div>
 
-              {/* Hero Right: Interactive Regulation & Cost Estimator Preview */}
-              <div className="lg:col-span-6">
+            {/* Full-Width 4-Column Proof Strip */}
+            <motion.div
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.2 }}
+              transition={{ duration: 0.45, ease: 'easeOut' }}
+              className="mt-14 grid grid-cols-1 gap-6 border-t border-slate-200 pt-10 sm:grid-cols-2 lg:grid-cols-4"
+            >
+              <div>
+                <p className="font-mono text-2xl font-semibold tabular-nums text-slate-900">
+                  &lt; 10 Menit
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Pengajuan sampling mandiri 24/7 melalui form wizard 5 langkah terstruktur
+                </p>
+              </div>
+              <div>
+                <p className="font-mono text-2xl font-semibold tabular-nums text-slate-900">85%</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Pengurangan beban input front-office dan eliminasi salah ketik metode SNI
+                </p>
+              </div>
+              <div>
+                <p className="font-mono text-2xl font-semibold tabular-nums text-slate-900">
+                  &lt; 4 Jam
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Target penyelesaian Kaji Ulang Permintaan ISO/IEC 17025 oleh Manajer Teknis
+                </p>
+              </div>
+              <div>
+                <p className="font-mono text-2xl font-semibold tabular-nums text-slate-900">
+                  100% SNI
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Validasi parameter uji terikat langsung pada regulasi pemerintah terkini
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        </section>
+
+        {/* HERO SLIDE 2: SIMULASI PENGIKATAN BAKU MUTU & REAKSI ERLENMEYER */}
+        <section
+          ref={simulasiRef}
+          id="simulasi-baku-mutu"
+          className="scroll-mt-16 overflow-hidden border-b border-slate-200 bg-slate-50"
+        >
+          <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
+            <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+              <div className="max-w-2xl">
+                <p className="font-mono text-xs font-medium text-cyan-700">
+                  Simulasi Pra-Pengajuan · Keterikatan Regulasi &amp; Estimasi Biaya
+                </p>
+                <h2 className="mt-2 font-display text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl text-balance">
+                  Simulasi Pengikatan Baku Mutu dan Estimasi Tarif SPH
+                </h2>
+              </div>
+              <p className="max-w-md text-sm text-slate-600">
+                Sesuaikan matriks contoh uji, parameter SNI, dan jumlah titik untuk mengamati reaksi
+                uji serta estimasi biaya secara langsung.
+              </p>
+            </div>
+
+            <div className="mt-8 grid grid-cols-1 items-stretch gap-8 lg:grid-cols-12">
+              {/* Simulation Slide Left: Enlarged Erlenmeyer Reaction Matching Simulation Card Height */}
+              <motion.div
+                initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.15 }}
+                transition={{ duration: 0.45, ease: 'easeOut' }}
+                className="lg:col-span-6"
+              >
+                <ErlenmeyerReaction
+                  matrix={activePreset.matrix}
+                  regulationCode={activePreset.code}
+                  scrollProgress={simulasiScrollProgress}
+                  selectedParamCount={selectedParameters.length}
+                  pointCount={pointCount}
+                />
+              </motion.div>
+
+              {/* Simulation Slide Right: Interactive Regulation & Cost Estimator Card */}
+              <motion.div
+                initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.15 }}
+                transition={{ duration: 0.45, delay: 0.06, ease: 'easeOut' }}
+                className="lg:col-span-6"
+              >
                 <div className="flex h-full flex-col justify-between rounded-xl border border-slate-800 bg-slate-900 p-6 text-slate-100 sm:p-7">
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
@@ -206,7 +381,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                                 </p>
                               </div>
                             </div>
-                            <span className="font-mono text-xs font-medium text-cyan-300 shrink-0">
+                            <span className="font-mono text-xs font-medium tabular-nums text-cyan-300 shrink-0">
                               {formatRupiah(param.price)}
                             </span>
                           </button>
@@ -229,7 +404,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                           >
                             -
                           </button>
-                          <span className="w-8 text-center font-mono text-xs font-semibold text-white">
+                          <span className="w-8 text-center font-mono text-xs font-semibold tabular-nums text-white">
                             {pointCount}
                           </span>
                           <button
@@ -247,14 +422,14 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                         <p className="text-xs text-slate-400">
                           Estimasi Total ({selectedParameters.length} parameter · Termasuk PPN 11%)
                         </p>
-                        <p className="font-mono text-xl font-semibold text-white">
+                        <p className="font-mono text-xl font-semibold tabular-nums text-white">
                           {formatRupiah(grandTotal)}
                         </p>
                       </div>
                     </div>
 
                     <div className="mt-4 flex items-center justify-between gap-4 border-t border-slate-800/80 pt-3">
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs tabular-nums text-slate-400">
                         Subtotal {formatRupiah(subtotal)} + PPN {formatRupiah(ppn)}
                       </span>
                       <button
@@ -268,35 +443,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Full-Width 4-Column Proof Strip */}
-            <div className="mt-14 grid grid-cols-1 gap-6 border-t border-slate-200 pt-10 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <p className="font-mono text-2xl font-semibold text-slate-900">&lt; 10 Menit</p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Pengajuan sampling mandiri 24/7 melalui form wizard 5 langkah terstruktur
-                </p>
-              </div>
-              <div>
-                <p className="font-mono text-2xl font-semibold text-slate-900">85%</p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Pengurangan beban input front-office dan eliminasi salah ketik metode SNI
-                </p>
-              </div>
-              <div>
-                <p className="font-mono text-2xl font-semibold text-slate-900">&lt; 4 Jam</p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Target penyelesaian Kaji Ulang Permintaan ISO/IEC 17025 oleh Manajer Teknis
-                </p>
-              </div>
-              <div>
-                <p className="font-mono text-2xl font-semibold text-slate-900">100% SNI</p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Validasi parameter uji terikat langsung pada regulasi pemerintah terkini
-                </p>
-              </div>
+              </motion.div>
             </div>
           </div>
         </section>
@@ -318,7 +465,13 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
 
           <div className="mt-10 grid grid-cols-1 gap-6 lg:grid-cols-3">
             {/* Bento 1 (col-span-2): Auto-Regulation & AI Industry Recommendation */}
-            <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 lg:col-span-2">
+            <motion.div
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{ duration: 0.4, ease: 'easeOut' }}
+              className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 lg:col-span-2"
+            >
               <div>
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-2.5 text-slate-900">
@@ -369,10 +522,16 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                   Metode SNI Tervalidasi
                 </span>
               </div>
-            </div>
+            </motion.div>
 
             {/* Bento 2 (col-span-1): Interactive Calendar Quota Preview */}
-            <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6">
+            <motion.div
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{ duration: 0.4, delay: 0.06, ease: 'easeOut' }}
+              className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6"
+            >
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 text-slate-900">
@@ -429,10 +588,16 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                   Alat Siaga: {activeSlot.equipmentReady}
                 </p>
               </div>
-            </div>
+            </motion.div>
 
             {/* Bento 3 (col-span-1): Dynamic Points & GPS */}
-            <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6">
+            <motion.div
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{ duration: 0.4, delay: 0.08, ease: 'easeOut' }}
+              className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6"
+            >
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 text-slate-900">
@@ -463,10 +628,16 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                   <span className="font-mono text-slate-500">-6.24290, 107.15044</span>
                 </div>
               </div>
-            </div>
+            </motion.div>
 
             {/* Bento 4 (col-span-2): ISO 17025 Clause 7.1 & Instant SPH */}
-            <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 lg:col-span-2">
+            <motion.div
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{ duration: 0.4, delay: 0.12, ease: 'easeOut' }}
+              className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 lg:col-span-2"
+            >
               <div>
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-2.5 text-slate-900">
@@ -514,7 +685,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                   </p>
                 </div>
               </div>
-            </div>
+            </motion.div>
           </div>
         </section>
 
@@ -553,7 +724,13 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
               </div>
             </div>
 
-            <div className="mt-8 overflow-hidden rounded-xl border border-slate-200">
+            <motion.div
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{ duration: 0.45, ease: 'easeOut' }}
+              className="mt-8 overflow-hidden rounded-xl border border-slate-200"
+            >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3.5">
                 <div>
                   <h3 className="font-display text-sm font-semibold text-slate-900">
@@ -600,7 +777,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                   </tbody>
                 </table>
               </div>
-            </div>
+            </motion.div>
           </div>
         </section>
 
@@ -615,47 +792,60 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
             </h2>
           </div>
 
-          {/* 4-Step End-to-End Flow */}
-          <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-xs font-semibold text-cyan-700">Tahap 01</p>
-              <h3 className="mt-2 font-display text-base font-semibold text-slate-900">
-                Pengajuan Wizard 5-Langkah
-              </h3>
-              <p className="mt-1.5 text-sm text-slate-600">
-                Pelanggan mengisi profil PJ, tanggal kuota, titik koordinat, regulasi, dan melihat
-                draf estimasi biaya.
-              </p>
+          {/* Scroll-Linked Progress Line Connecting Stages */}
+          <div ref={workflowRef} className="mt-10">
+            <div className="mb-4 hidden h-1 w-full overflow-hidden rounded-full bg-slate-200 lg:block">
+              <motion.div
+                style={shouldReduceMotion ? undefined : { scaleX: workflowLineScale }}
+                className="h-full origin-left rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500"
+              />
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-xs font-semibold text-cyan-700">Tahap 02</p>
-              <h3 className="mt-2 font-display text-base font-semibold text-slate-900">
-                Verifikasi Admin Lab
-              </h3>
-              <p className="mt-1.5 text-sm text-slate-600">
-                Validasi berkas permohonan, pengecekan parameter wajib regulasi, dan penguncian slot
-                kalender tim.
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-xs font-semibold text-emerald-700">Tahap 03</p>
-              <h3 className="mt-2 font-display text-base font-semibold text-slate-900">
-                Kaji Ulang ISO 17025
-              </h3>
-              <p className="mt-1.5 text-sm text-slate-600">
-                Manajer Teknis mengevaluasi kesiapan metode SNI dan menugaskan petugas Sampler
-                bersertifikat BNSP.
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <p className="font-mono text-xs font-semibold text-emerald-700">Tahap 04</p>
-              <h3 className="mt-2 font-display text-base font-semibold text-slate-900">
-                Terbit SPH &amp; SPK Sampling
-              </h3>
-              <p className="mt-1.5 text-sm text-slate-600">
-                Sistem menerbitkan SPH final dan SPK lapangan. Status permohonan otomatis menjadi
-                Siap Eksekusi.
-              </p>
+
+            {/* 4-Step End-to-End Flow */}
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                {
+                  stepLabel: 'Tahap 01',
+                  accent: 'text-cyan-700',
+                  title: 'Pengajuan Wizard 5-Langkah',
+                  desc: 'Pelanggan mengisi profil PJ, tanggal kuota, titik koordinat, regulasi, dan melihat draf estimasi biaya.',
+                },
+                {
+                  stepLabel: 'Tahap 02',
+                  accent: 'text-cyan-700',
+                  title: 'Verifikasi Admin Lab',
+                  desc: 'Validasi berkas permohonan, pengecekan parameter wajib regulasi, dan penguncian slot kalender tim.',
+                },
+                {
+                  stepLabel: 'Tahap 03',
+                  accent: 'text-emerald-700',
+                  title: 'Kaji Ulang ISO 17025',
+                  desc: 'Manajer Teknis mengevaluasi kesiapan metode SNI dan menugaskan petugas Sampler bersertifikat BNSP.',
+                },
+                {
+                  stepLabel: 'Tahap 04',
+                  accent: 'text-emerald-700',
+                  title: 'Terbit SPH & SPK Sampling',
+                  desc: 'Sistem menerbitkan SPH final dan SPK lapangan. Status permohonan otomatis menjadi Siap Eksekusi.',
+                },
+              ].map((item, idx) => (
+                <motion.div
+                  key={item.stepLabel}
+                  initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, amount: 0.2 }}
+                  transition={{ duration: 0.4, delay: idx * 0.07, ease: 'easeOut' }}
+                  className="rounded-xl border border-slate-200 bg-white p-5"
+                >
+                  <p className={`font-mono text-xs font-semibold ${item.accent}`}>
+                    {item.stepLabel}
+                  </p>
+                  <h3 className="mt-2 font-display text-base font-semibold text-slate-900">
+                    {item.title}
+                  </h3>
+                  <p className="mt-1.5 text-sm text-slate-600">{item.desc}</p>
+                </motion.div>
+              ))}
             </div>
           </div>
 
@@ -730,7 +920,13 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
         <section id="kepatuhan" className="border-t border-slate-200 bg-slate-900 text-slate-100">
           <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-20">
             <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-12">
-              <div className="lg:col-span-7">
+              <motion.div
+                initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.2 }}
+                transition={{ duration: 0.45, ease: 'easeOut' }}
+                className="lg:col-span-7"
+              >
                 <p className="font-mono text-xs font-medium text-emerald-400">
                   04. Kepatuhan Audit &amp; Proteksi Data
                 </p>
@@ -772,9 +968,15 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                     </div>
                   </div>
                 </div>
-              </div>
+              </motion.div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-7 lg:col-span-5">
+              <motion.div
+                initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.2 }}
+                transition={{ duration: 0.45, delay: 0.08, ease: 'easeOut' }}
+                className="rounded-xl border border-slate-800 bg-slate-950/70 p-7 lg:col-span-5"
+              >
                 <h3 className="font-display text-xl font-bold text-white">
                   Siap mengajukan permohonan sampling laboratorium?
                 </h3>
@@ -799,7 +1001,7 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                     Login Personel Internal Lab
                   </button>
                 </div>
-              </div>
+              </motion.div>
             </div>
           </div>
         </section>

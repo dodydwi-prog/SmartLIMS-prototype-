@@ -6,6 +6,7 @@ interface NavbarProps {
 }
 
 const NAV_ITEMS = [
+  { label: 'Simulasi', href: '#simulasi-baku-mutu' },
   { label: 'Kapabilitas', href: '#kapabilitas' },
   { label: 'Regulasi', href: '#regulasi' },
   { label: 'Alur Kerja', href: '#alur-kerja' },
