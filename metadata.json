@@ -1,0 +1,6 @@
+{
+  "name": "SmartLIMS - Online Sampling Portal",
+  "description": "Portal self-service permohonan pengambilan contoh uji lingkungan terintegrasi dan kaji ulang permintaan berstandar ISO/IEC 17025:2017.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

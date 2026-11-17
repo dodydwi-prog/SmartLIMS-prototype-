@@ -1,0 +1,158 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profil akun pengguna SmartLIMS (Pelanggan HSE atau Personel Internal Lab).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "username": { "type": "string", "minLength": 3, "maxLength": 64 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 150 },
+        "role": { "type": "string", "enum": ["customer", "admin", "technical_manager", "executive"] },
+        "roleTitle": { "type": "string", "maxLength": 120 },
+        "companyName": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "nibOrNip": { "type": "string", "maxLength": 64 },
+        "sectorId": { "type": "string", "maxLength": 64 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "address": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "name", "role", "companyName", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Dokumen penanda hak akses Admin / Manajer Teknis Laboratorium.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "grantedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "grantedAt"]
+    },
+    "CalendarCapacityDay": {
+      "title": "CalendarCapacityDay",
+      "description": "Kapasitas slot harian tim Sampler dan status penguncian tanggal kalender.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "maxLength": 10 },
+        "dayLabel": { "type": "string", "maxLength": 20 },
+        "dateLabel": { "type": "string", "maxLength": 40 },
+        "maxCapacity": { "type": "number" },
+        "isLocked": { "type": "boolean" },
+        "equipmentNote": { "type": "string", "maxLength": 250 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "dayLabel", "dateLabel", "maxCapacity", "isLocked", "equipmentNote", "updatedAt"]
+    },
+    "SamplerTeam": {
+      "title": "SamplerTeam",
+      "description": "Tim petugas pengambil contoh uji bersertifikat BNSP.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 150 },
+        "bnspCert": { "type": "string", "maxLength": 80 },
+        "specialization": { "type": "string", "maxLength": 150 }
+      },
+      "required": ["id", "name", "bnspCert", "specialization"]
+    },
+    "SamplingRequest": {
+      "title": "SamplingRequest",
+      "description": "Permohonan pengambilan contoh uji lingkungan beserta titik sampling dan kaji ulang ISO 17025.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "trackingCode": { "type": "string", "pattern": "^SMP-\\d{6}-\\d{4}$", "maxLength": 30 },
+        "companyId": { "type": "string", "maxLength": 128 },
+        "companyName": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "nibNumber": { "type": "string", "maxLength": 64 },
+        "sectorId": { "type": "string", "maxLength": 64 },
+        "picName": { "type": "string", "minLength": 2, "maxLength": 150 },
+        "picEmail": { "type": "string", "format": "email", "maxLength": 200 },
+        "picPhone": { "type": "string", "maxLength": 40 },
+        "siteAddress": { "type": "string", "minLength": 3, "maxLength": 350 },
+        "scheduledDate": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "maxLength": 10 },
+        "points": { "type": "array" },
+        "labSubtotal": { "type": "number" },
+        "transportFee": { "type": "number" },
+        "ppnAmount": { "type": "number" },
+        "totalEstimatedCost": { "type": "number" },
+        "status": { "type": "string", "enum": ["SUBMITTED", "VERIFIED", "APPROVED", "REJECTED"] },
+        "rejectionReason": { "type": "string", "maxLength": 500 },
+        "verifiedAt": { "type": "string", "maxLength": 40 },
+        "verifiedBy": { "type": "string", "maxLength": 150 },
+        "createdAtLabel": { "type": "string", "maxLength": 40 },
+        "kajiUlang": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerUid",
+        "trackingCode",
+        "companyId",
+        "companyName",
+        "nibNumber",
+        "sectorId",
+        "picName",
+        "picEmail",
+        "picPhone",
+        "siteAddress",
+        "scheduledDate",
+        "points",
+        "labSubtotal",
+        "transportFee",
+        "ppnAmount",
+        "totalEstimatedCost",
+        "status",
+        "createdAtLabel",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AuditLogEntry": {
+      "title": "AuditLogEntry",
+      "description": "Jejak audit permanen ISO/IEC 17025 yang tidak dapat diubah atau dihapus.",
+      "type": "object",
+      "properties": {
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "timestampLabel": { "type": "string", "maxLength": 40 },
+        "actorName": { "type": "string", "maxLength": 150 },
+        "actorRole": { "type": "string", "maxLength": 100 },
+        "trackingCode": { "type": "string", "maxLength": 30 },
+        "action": { "type": "string", "maxLength": 60 },
+        "detail": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorUid", "timestampLabel", "actorName", "actorRole", "trackingCode", "action", "detail", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Profil pengguna dan perusahaan terdaftar dengan isolasi PII per pemilik atau Admin."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Daftar UID Admin dan Manajer Teknis Laboratorium."
+    },
+    "/calendar_days/{dayId}": {
+      "schema": { "$ref": "#/entities/CalendarCapacityDay" },
+      "description": "Kuota kapasitas harian tim lapangan dan status penguncian jadwal."
+    },
+    "/sampler_teams/{teamId}": {
+      "schema": { "$ref": "#/entities/SamplerTeam" },
+      "description": "Master tim petugas pengambil contoh uji bersertifikat BNSP."
+    },
+    "/sampling_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/SamplingRequest" },
+      "description": "Permohonan pengambilan contoh uji, titik GPS, estimasi biaya, dan kaji ulang ISO 17025."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLogEntry" },
+      "description": "Log audit permanen (append-only) untuk kepatuhan ISO/IEC 17025."
+    }
+  }
+}

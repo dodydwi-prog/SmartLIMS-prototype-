@@ -1,0 +1,328 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Startup connectivity check document (no PII)
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // --- GLOBAL HELPERS ---
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'password'
+      );
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email_verified == true && request.auth.token.email == 'dwiputradody@gmail.com') ||
+        (request.auth.token.firebase.sign_in_provider == 'password' && request.auth.token.email in [
+          'admin@smartlims.id',
+          'teknis@smartlims.id',
+          'pimpinan@smartlims.id'
+        ])
+      );
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(uid) {
+      return isVerifiedUser() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDateString(val) {
+      return val is string && val.size() == 10 && val.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    // --- ENTITY VALIDATION BLUEPRINTS ---
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'role', 'companyName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'username', 'email', 'name', 'role', 'roleTitle', 'companyName',
+          'nibOrNip', 'sectorId', 'phone', 'address', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && (!('username' in data) || (data.username is string && data.username.size() >= 3 && data.username.size() <= 64))
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 150
+        && data.role in ['customer', 'admin', 'technical_manager', 'executive']
+        && data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 200
+        && (!('roleTitle' in data) || (data.roleTitle is string && data.roleTitle.size() <= 120))
+        && (!('nibOrNip' in data) || (data.nibOrNip is string && data.nibOrNip.size() <= 64))
+        && (!('sectorId' in data) || (data.sectorId is string && data.sectorId.size() <= 64))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
+        && (!('address' in data) || (data.address is string && data.address.size() <= 300))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'grantedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'grantedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.grantedAt is timestamp;
+    }
+
+    function isValidCalendarDay(data) {
+      return data.keys().hasAll(['date', 'dayLabel', 'dateLabel', 'maxCapacity', 'isLocked', 'equipmentNote', 'updatedAt'])
+        && data.keys().hasOnly(['date', 'dayLabel', 'dateLabel', 'maxCapacity', 'isLocked', 'equipmentNote', 'updatedAt'])
+        && isValidDateString(data.date)
+        && data.dayLabel is string && data.dayLabel.size() >= 1 && data.dayLabel.size() <= 20
+        && data.dateLabel is string && data.dateLabel.size() >= 1 && data.dateLabel.size() <= 40
+        && data.maxCapacity is number && data.maxCapacity >= 1 && data.maxCapacity <= 25
+        && data.isLocked is bool
+        && data.equipmentNote is string && data.equipmentNote.size() <= 250
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSamplerTeam(data) {
+      return data.keys().hasAll(['id', 'name', 'bnspCert', 'specialization'])
+        && data.keys().hasOnly(['id', 'name', 'bnspCert', 'specialization'])
+        && data.id is string && data.id.size() >= 1 && data.id.size() <= 64
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 150
+        && data.bnspCert is string && data.bnspCert.size() >= 2 && data.bnspCert.size() <= 80
+        && data.specialization is string && data.specialization.size() >= 2 && data.specialization.size() <= 150;
+    }
+
+    function isValidKajiUlangMap(ku) {
+      return ku is map
+        && ku.keys().hasAll([
+          'methodAvailable', 'equipmentCalibrated', 'consumablesReady',
+          'personnelCompetent', 'assignedSamplerId', 'assignedSamplerName',
+          'reviewerName', 'reviewedAt', 'technicalNotes', 'decision'
+        ])
+        && ku.keys().hasOnly([
+          'methodAvailable', 'equipmentCalibrated', 'consumablesReady',
+          'personnelCompetent', 'assignedSamplerId', 'assignedSamplerName',
+          'reviewerName', 'reviewedAt', 'technicalNotes', 'decision'
+        ])
+        && ku.methodAvailable is bool
+        && ku.equipmentCalibrated is bool
+        && ku.consumablesReady is bool
+        && ku.personnelCompetent is bool
+        && ku.assignedSamplerId is string && ku.assignedSamplerId.size() <= 64
+        && ku.assignedSamplerName is string && ku.assignedSamplerName.size() <= 150
+        && ku.reviewerName is string && ku.reviewerName.size() <= 150
+        && ku.reviewedAt is string && ku.reviewedAt.size() <= 40
+        && ku.technicalNotes is string && ku.technicalNotes.size() <= 600
+        && ku.decision in ['PASS', 'FAIL'];
+    }
+
+    function isValidSamplingRequest(data) {
+      return data.keys().hasAll([
+          'ownerUid', 'trackingCode', 'companyId', 'companyName', 'nibNumber',
+          'sectorId', 'picName', 'picEmail', 'picPhone', 'siteAddress',
+          'scheduledDate', 'points', 'labSubtotal', 'transportFee',
+          'ppnAmount', 'totalEstimatedCost', 'status', 'createdAtLabel',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'trackingCode', 'companyId', 'companyName', 'nibNumber',
+          'sectorId', 'picName', 'picEmail', 'picPhone', 'siteAddress',
+          'scheduledDate', 'points', 'labSubtotal', 'transportFee',
+          'ppnAmount', 'totalEstimatedCost', 'status', 'rejectionReason',
+          'verifiedAt', 'verifiedBy', 'kajiUlang', 'createdAtLabel',
+          'createdAt', 'updatedAt'
+        ])
+        && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && data.trackingCode is string && data.trackingCode.size() <= 30 && data.trackingCode.matches('^SMP-\\d{6}-\\d{4}$')
+        && data.companyId is string && data.companyId.size() >= 1 && data.companyId.size() <= 128
+        && data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 200
+        && data.nibNumber is string && data.nibNumber.size() <= 64
+        && data.sectorId is string && data.sectorId.size() <= 64
+        && data.picName is string && data.picName.size() >= 2 && data.picName.size() <= 150
+        && data.picEmail is string && data.picEmail.size() >= 3 && data.picEmail.size() <= 200
+        && data.picPhone is string && data.picPhone.size() <= 40
+        && data.siteAddress is string && data.siteAddress.size() >= 3 && data.siteAddress.size() <= 350
+        && isValidDateString(data.scheduledDate)
+        && data.points is list && data.points.size() >= 1 && data.points.size() <= 20
+        && data.points[0] is map
+        && data.points[0].pointName is string && data.points[0].pointName.size() >= 1 && data.points[0].pointName.size() <= 150
+        && data.labSubtotal is number && data.labSubtotal >= 0
+        && data.transportFee is number && data.transportFee >= 0
+        && data.ppnAmount is number && data.ppnAmount >= 0
+        && data.totalEstimatedCost is number && data.totalEstimatedCost >= 0
+        && data.status in ['SUBMITTED', 'VERIFIED', 'APPROVED', 'REJECTED']
+        && data.createdAtLabel is string && data.createdAtLabel.size() <= 40
+        && (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 500))
+        && (!('verifiedAt' in data) || (data.verifiedAt is string && data.verifiedAt.size() <= 40))
+        && (!('verifiedBy' in data) || (data.verifiedBy is string && data.verifiedBy.size() <= 150))
+        && (!('kajiUlang' in data) || isValidKajiUlangMap(data.kajiUlang))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll([
+          'actorUid', 'timestampLabel', 'actorName', 'actorRole',
+          'trackingCode', 'action', 'detail', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'actorUid', 'timestampLabel', 'actorName', 'actorRole',
+          'trackingCode', 'action', 'detail', 'createdAt'
+        ])
+        && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
+        && data.timestampLabel is string && data.timestampLabel.size() <= 40
+        && data.actorName is string && data.actorName.size() <= 150
+        && data.actorRole is string && data.actorRole.size() <= 100
+        && data.trackingCode is string && data.trackingCode.size() <= 30
+        && data.action is string && data.action.size() <= 60
+        && data.detail is string && data.detail.size() <= 500
+        && data.createdAt is timestamp;
+    }
+
+    // --- COLLECTION RULES ---
+
+    // 1. Users (PII Isolation: owner or admin only)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          (isOwner(userId) && incoming().uid == request.auth.uid && incoming().role == 'customer') ||
+          (isBootstrappedAdmin() && incoming().uid == userId)
+        );
+      allow update: if isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isBootstrappedAdmin() ||
+          (
+            isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'companyName', 'nibOrNip', 'sectorId', 'phone', 'address', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if false;
+    }
+
+    // 2. Admins Allowlist
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && isVerifiedUser() && (request.auth.uid == userId || isBootstrappedAdmin());
+      allow list: if isBootstrappedAdmin();
+      allow create, update: if isValidId(userId) && isBootstrappedAdmin() && isValidAdminRecord(incoming());
+      allow delete: if isValidId(userId) && isBootstrappedAdmin();
+    }
+
+    // 3. Calendar Capacity Days
+    match /calendar_days/{dayId} {
+      allow get: if isValidId(dayId) && isVerifiedUser();
+      allow list: if isVerifiedUser();
+      allow create: if isValidId(dayId)
+        && isAdmin()
+        && isValidCalendarDay(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(dayId)
+        && isAdmin()
+        && isValidCalendarDay(incoming())
+        && incoming().date == existing().date
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['maxCapacity', 'isLocked', 'equipmentNote', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // 4. Sampler Teams (BNSP)
+    match /sampler_teams/{teamId} {
+      allow get: if isValidId(teamId) && isVerifiedUser();
+      allow list: if isVerifiedUser();
+      allow create, update: if isValidId(teamId) && isAdmin() && isValidSamplerTeam(incoming());
+      allow delete: if isValidId(teamId) && isAdmin();
+    }
+
+    // 5. Sampling Requests
+    match /sampling_requests/{requestId} {
+      allow get: if isValidId(requestId) && (
+        isAdmin() ||
+        (isVerifiedUser() && existing().ownerUid == request.auth.uid)
+      );
+      allow list: if isBootstrappedAdmin() || (
+        isVerifiedUser() && resource.data.ownerUid == request.auth.uid
+      );
+      allow create: if isValidId(requestId)
+        && isVerifiedUser()
+        && isValidSamplingRequest(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (incoming().ownerUid == request.auth.uid && incoming().status == 'SUBMITTED')
+        );
+      allow update: if isValidId(requestId)
+        && isVerifiedUser()
+        && isValidSamplingRequest(incoming())
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().trackingCode == existing().trackingCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Admin verification
+          (isAdmin() && existing().status == 'SUBMITTED' && incoming().status == 'VERIFIED'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'verifiedAt', 'verifiedBy', 'updatedAt'])) ||
+          // Action: Admin rejection / revision request
+          (isAdmin() && existing().status in ['SUBMITTED', 'VERIFIED'] && incoming().status == 'REJECTED'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'rejectionReason', 'updatedAt'])) ||
+          // Action: Admin / Technical Manager ISO 17025 Kaji Ulang approval
+          (isAdmin() && existing().status in ['SUBMITTED', 'VERIFIED'] && incoming().status == 'APPROVED'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'verifiedAt', 'verifiedBy', 'kajiUlang', 'updatedAt'])) ||
+          // Action: Customer schedule/point/site revision or resubmission after REJECTED
+          (existing().ownerUid == request.auth.uid && existing().status in ['SUBMITTED', 'REJECTED'] && incoming().status == 'SUBMITTED'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'companyName', 'nibNumber', 'sectorId', 'picName', 'picPhone', 'siteAddress',
+              'scheduledDate', 'points', 'labSubtotal', 'transportFee', 'ppnAmount',
+              'totalEstimatedCost', 'status', 'rejectionReason', 'updatedAt'
+            ]))
+        );
+      allow delete: if false;
+    }
+
+    // 6. Immutable ISO 17025 Audit Logs
+    match /audit_logs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(logId)
+        && isVerifiedUser()
+        && isValidAuditLog(incoming())
+        && incoming().actorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && (isAdmin() || incoming().action == 'SUBMITTED');
+      allow update, delete: if false;
+    }
+  }
+}
