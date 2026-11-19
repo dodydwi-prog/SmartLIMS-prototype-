@@ -4,6 +4,7 @@ import { AdminPortal } from './components/AdminPortal';
 import { CustomerPortal } from './components/CustomerPortal';
 import { LandingPage } from './components/LandingPage';
 import { LoginPage } from './components/LoginPage';
+import { PublicAiChatbot } from './components/PublicAiChatbot';
 import { DEMO_USERS, INITIAL_CALENDAR_DAYS, SAMPLER_TEAMS } from './data/limsMockDatabase';
 import { PortalRoleId } from './data/limsPreviewData';
 import { auth } from './lib/firebase';
@@ -295,19 +296,27 @@ export default function App() {
 
   if (view === 'login') {
     return (
-      <LoginPage
-        initialRole={selectedRole}
-        onBackToLanding={navigateToLanding}
-        onAuthStart={() => {
-          isInteractiveLoginRef.current = true;
-        }}
-        onAuthAbort={() => {
-          isInteractiveLoginRef.current = false;
-        }}
-        onFirebaseAuthSuccess={handleFirebaseAuthSuccess}
-      />
+      <>
+        <LoginPage
+          initialRole={selectedRole}
+          onBackToLanding={navigateToLanding}
+          onAuthStart={() => {
+            isInteractiveLoginRef.current = true;
+          }}
+          onAuthAbort={() => {
+            isInteractiveLoginRef.current = false;
+          }}
+          onFirebaseAuthSuccess={handleFirebaseAuthSuccess}
+        />
+        <PublicAiChatbot pageContext="login" />
+      </>
     );
   }
 
-  return <LandingPage onNavigateLogin={navigateToLogin} />;
+  return (
+    <>
+      <LandingPage onNavigateLogin={navigateToLogin} />
+      <PublicAiChatbot pageContext="landing" />
+    </>
+  );
 }
