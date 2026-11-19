@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BookOpen,
   CalendarDays,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { REGULATION_PRESETS, formatRupiah } from '../data/limsPreviewData';
 import { STATUS_META } from '../data/limsMockDatabase';
+import { CUSTOMER_TAB_TO_PATH, CustomerNavTab } from '../routes';
 import {
   downloadSamplingRequestsCsv,
   downloadSphPdf,
@@ -29,9 +31,8 @@ import {
 import { CustomerWizard } from './CustomerWizard';
 import { DocumentModal, LimsDocumentType } from './DocumentModal';
 
-type CustomerNavTab = 'dashboard' | 'wizard' | 'calendar' | 'catalog';
-
 interface CustomerPortalProps {
+  activeTab: CustomerNavTab;
   currentUser: DemoUser;
   requests: SamplingRequest[];
   calendarDays: CalendarCapacityDay[];
@@ -41,6 +42,7 @@ interface CustomerPortalProps {
 }
 
 export function CustomerPortal({
+  activeTab,
   currentUser,
   requests,
   calendarDays,
@@ -48,7 +50,8 @@ export function CustomerPortal({
   onUpdateRequest,
   onLogout,
 }: CustomerPortalProps) {
-  const [activeTab, setActiveTab] = useState<CustomerNavTab>('dashboard');
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Dashboard filters & selection
@@ -58,9 +61,9 @@ export function CustomerPortal({
   const [recentTrackingBanner, setRecentTrackingBanner] = useState<string | null>(null);
   const [recentBannerType, setRecentBannerType] = useState<'create' | 'revise'>('create');
 
-  // Wizard edit / preselected date state
-  const [editingRequest, setEditingRequest] = useState<SamplingRequest | null>(null);
-  const [wizardInitialDate, setWizardInitialDate] = useState<string | null>(null);
+  // Wizard edit / preselected date derived from URL query params (survives F5)
+  const wizardInitialDate = searchParams.get('tanggal');
+  const revisionRequestId = searchParams.get('revisi');
 
   // Document modal state
   const [docPreview, setDocPreview] = useState<{
@@ -68,8 +71,15 @@ export function CustomerPortal({
     type: LimsDocumentType;
   } | null>(null);
 
-  // Catalog filter
-  const [catalogRegId, setCatalogRegId] = useState<string>(REGULATION_PRESETS[0].id);
+  // Catalog filter (persisted via ?reg query param)
+  const regQueryParam = searchParams.get('reg');
+  const catalogRegId =
+    regQueryParam && REGULATION_PRESETS.some((r) => r.id === regQueryParam)
+      ? regQueryParam
+      : REGULATION_PRESETS[0].id;
+  const setCatalogRegId = (regId: string) => {
+    setSearchParams({ reg: regId }, { replace: true });
+  };
 
   // Filter requests belonging to this customer (or created by this user)
   const myRequests = requests.filter(
@@ -101,36 +111,42 @@ export function CustomerPortal({
     .filter((r) => r.status !== 'REJECTED')
     .reduce((sum, r) => sum + r.totalEstimatedCost, 0);
 
+  const editingRequest = revisionRequestId
+    ? myRequests.find((r) => r.id === revisionRequestId) ?? null
+    : null;
+
+  const navigateToTab = (tab: CustomerNavTab) => {
+    navigate(CUSTOMER_TAB_TO_PATH[tab]);
+  };
+
   const openNewWizard = (preselectedDate?: string) => {
-    setEditingRequest(null);
-    setWizardInitialDate(preselectedDate ?? null);
-    setActiveTab('wizard');
+    if (preselectedDate) {
+      navigate(
+        `${CUSTOMER_TAB_TO_PATH.wizard}?tanggal=${encodeURIComponent(preselectedDate)}`
+      );
+    } else {
+      navigate(CUSTOMER_TAB_TO_PATH.wizard);
+    }
   };
 
   const openRevisionWizard = (req: SamplingRequest) => {
-    setEditingRequest(req);
-    setWizardInitialDate(null);
-    setActiveTab('wizard');
+    navigate(`${CUSTOMER_TAB_TO_PATH.wizard}?revisi=${encodeURIComponent(req.id)}`);
   };
 
   const handleWizardSubmit = async (newReq: SamplingRequest) => {
     await onAddRequest(newReq);
-    setEditingRequest(null);
-    setWizardInitialDate(null);
     setSelectedRequestId(newReq.id);
     setRecentBannerType('create');
     setRecentTrackingBanner(newReq.trackingCode);
-    setActiveTab('dashboard');
+    navigateToTab('dashboard');
   };
 
   const handleWizardResubmit = async (updatedReq: SamplingRequest) => {
     await onUpdateRequest(updatedReq);
-    setEditingRequest(null);
-    setWizardInitialDate(null);
     setSelectedRequestId(updatedReq.id);
     setRecentBannerType('revise');
     setRecentTrackingBanner(updatedReq.trackingCode);
-    setActiveTab('dashboard');
+    navigateToTab('dashboard');
   };
 
   const navItems: { id: CustomerNavTab; label: string; icon: typeof LayoutDashboard }[] = [
@@ -173,9 +189,7 @@ export function CustomerPortal({
                       if (item.id === 'wizard') {
                         openNewWizard();
                       } else {
-                        setEditingRequest(null);
-                        setWizardInitialDate(null);
-                        setActiveTab(item.id);
+                        navigateToTab(item.id);
                       }
                     }}
                     className={`flex min-h-[42px] w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors cursor-pointer ${
@@ -247,9 +261,7 @@ export function CustomerPortal({
                         if (item.id === 'wizard') {
                           openNewWizard();
                         } else {
-                          setEditingRequest(null);
-                          setWizardInitialDate(null);
-                          setActiveTab(item.id);
+                          navigateToTab(item.id);
                         }
                         setMobileNavOpen(false);
                       }}
@@ -713,9 +725,7 @@ export function CustomerPortal({
                 onSubmitRequest={handleWizardSubmit}
                 onResubmitRequest={handleWizardResubmit}
                 onCancel={() => {
-                  setEditingRequest(null);
-                  setWizardInitialDate(null);
-                  setActiveTab('dashboard');
+                  navigateToTab('dashboard');
                 }}
               />
             )}

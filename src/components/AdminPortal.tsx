@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   BarChart3,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import { REGULATION_PRESETS, formatRupiah } from '../data/limsPreviewData';
 import { SAMPLER_TEAMS, STATUS_META } from '../data/limsMockDatabase';
+import { ADMIN_TAB_TO_PATH, AdminNavTab } from '../routes';
 import { formatNowTimestamp } from '../services/limsFirestore';
 import {
   downloadAuditLogsCsv,
@@ -42,14 +44,6 @@ import {
 } from '../types/lims';
 import { DocumentModal, LimsDocumentType } from './DocumentModal';
 
-type AdminNavTab =
-  | 'dashboard'
-  | 'verification'
-  | 'kaji-ulang'
-  | 'calendar'
-  | 'catalog'
-  | 'analytics';
-
 const REVISION_REASON_PRESETS = [
   'Slot jadwal pada tanggal dipilih penuh, mohon pilih ulang tanggal sampling.',
   'Peralatan sampling sedang dalam masa kalibrasi, mohon jadwalkan ulang.',
@@ -58,6 +52,7 @@ const REVISION_REASON_PRESETS = [
 ];
 
 interface AdminPortalProps {
+  activeTab: AdminNavTab;
   currentUser: DemoUser;
   requests: SamplingRequest[];
   calendarDays: CalendarCapacityDay[];
@@ -82,6 +77,7 @@ interface AdminPortalProps {
 }
 
 export function AdminPortal({
+  activeTab,
   currentUser,
   requests,
   calendarDays,
@@ -94,15 +90,38 @@ export function AdminPortal({
   onUpdateCalendarDay,
   onLogout,
 }: AdminPortalProps) {
-  const [activeTab, setActiveTab] = useState<AdminNavTab>(() =>
-    currentUser.roleId === 'technical_manager' ? 'kaji-ulang' : 'dashboard'
-  );
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const reqQueryParam = searchParams.get('req');
+  const regQueryParam = searchParams.get('reg');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Verification Center & mutation state
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | RequestStatus>('ALL');
-  const [selectedReqId, setSelectedReqId] = useState<string>(requests[0]?.id ?? '');
+  const [selectedReqId, setSelectedReqId] = useState<string>(
+    reqQueryParam || requests[0]?.id || ''
+  );
+
+  useEffect(() => {
+    if (reqQueryParam) {
+      setSelectedReqId(reqQueryParam);
+    }
+  }, [reqQueryParam]);
+
+  const navigateToTab = (tab: AdminNavTab, reqId?: string) => {
+    const basePath = ADMIN_TAB_TO_PATH[tab];
+    if (reqId && (tab === 'verification' || tab === 'kaji-ulang')) {
+      navigate(`${basePath}?req=${encodeURIComponent(reqId)}`);
+    } else {
+      navigate(basePath);
+    }
+  };
+
+  const handleSelectRequest = (reqId: string) => {
+    setSelectedReqId(reqId);
+    setSearchParams({ req: reqId }, { replace: true });
+  };
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectBox, setShowRejectBox] = useState(false);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
@@ -127,8 +146,14 @@ export function AdminPortal({
   const [editingNoteDate, setEditingNoteDate] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
 
-  // Catalog tab
-  const [catalogRegId, setCatalogRegId] = useState(REGULATION_PRESETS[0].id);
+  // Catalog tab (persisted via ?reg query param)
+  const catalogRegId =
+    regQueryParam && REGULATION_PRESETS.some((r) => r.id === regQueryParam)
+      ? regQueryParam
+      : REGULATION_PRESETS[0].id;
+  const setCatalogRegId = (regId: string) => {
+    setSearchParams({ reg: regId }, { replace: true });
+  };
 
   // Document modal
   const [docPreview, setDocPreview] = useState<{
@@ -335,7 +360,7 @@ export function AdminPortal({
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setActiveTab(item.id)}
+                    onClick={() => navigateToTab(item.id)}
                     className={`flex min-h-[42px] w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors cursor-pointer ${
                       isActive
                         ? 'bg-cyan-500/15 text-cyan-400'
@@ -403,7 +428,7 @@ export function AdminPortal({
                       key={item.id}
                       type="button"
                       onClick={() => {
-                        setActiveTab(item.id);
+                        navigateToTab(item.id);
                         setMobileNavOpen(false);
                       }}
                       className={`flex min-h-[44px] w-full items-center gap-3 rounded-lg px-3 text-sm font-medium ${
@@ -466,7 +491,7 @@ export function AdminPortal({
             <span className="hidden text-xs text-slate-500 sm:inline">{currentUser.name}</span>
             <button
               type="button"
-              onClick={() => setActiveTab('verification')}
+              onClick={() => navigateToTab('verification')}
               className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <ClipboardCheck className="h-3.5 w-3.5" aria-hidden="true" />
@@ -627,7 +652,7 @@ export function AdminPortal({
                       </div>
                       <button
                         type="button"
-                        onClick={() => setActiveTab('verification')}
+                        onClick={() => navigateToTab('verification')}
                         className="text-xs font-semibold text-cyan-700 hover:underline cursor-pointer"
                       >
                         Buka Verification Center
@@ -667,10 +692,11 @@ export function AdminPortal({
                                     type="button"
                                     onClick={() => {
                                       setSelectedReqId(req.id);
-                                      setActiveTab(
+                                      navigateToTab(
                                         req.status === 'VERIFIED'
                                           ? 'kaji-ulang'
-                                          : 'verification'
+                                          : 'verification',
+                                        req.id
                                       );
                                     }}
                                     className="font-semibold text-cyan-700 hover:underline cursor-pointer"
@@ -755,7 +781,7 @@ export function AdminPortal({
                               <tr
                                 key={req.id}
                                 onClick={() => {
-                                  setSelectedReqId(req.id);
+                                  handleSelectRequest(req.id);
                                   setShowRejectBox(false);
                                 }}
                                 className={`cursor-pointer transition-colors ${
@@ -900,7 +926,9 @@ export function AdminPortal({
                             <button
                               type="button"
                               disabled={isMutating}
-                              onClick={() => setActiveTab('kaji-ulang')}
+                              onClick={() =>
+                                navigateToTab('kaji-ulang', selectedRequest.id)
+                              }
                               className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-1.5 rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-60 cursor-pointer"
                             >
                               <FileCheck2 className="h-4 w-4" aria-hidden="true" />
@@ -1062,7 +1090,7 @@ export function AdminPortal({
                         <button
                           key={req.id}
                           type="button"
-                          onClick={() => setSelectedReqId(req.id)}
+                          onClick={() => handleSelectRequest(req.id)}
                           className={`w-full rounded-xl border p-3.5 text-left transition-colors cursor-pointer ${
                             isSelected
                               ? 'border-cyan-600 bg-cyan-50/60'

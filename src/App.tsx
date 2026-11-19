@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router-dom';
 import { AdminPortal } from './components/AdminPortal';
 import { CustomerPortal } from './components/CustomerPortal';
 import { LandingPage } from './components/LandingPage';
@@ -8,6 +16,14 @@ import { PublicAiChatbot } from './components/PublicAiChatbot';
 import { DEMO_USERS, INITIAL_CALENDAR_DAYS, SAMPLER_TEAMS } from './data/limsMockDatabase';
 import { PortalRoleId } from './data/limsPreviewData';
 import { auth } from './lib/firebase';
+import {
+  ADMIN_SLUG_TO_TAB,
+  CUSTOMER_SLUG_TO_TAB,
+  PUBLIC_ROUTES,
+  getDefaultPortalPath,
+  getRouteDocumentTitle,
+  isPathAllowedForUser,
+} from './routes';
 import {
   approveKajiUlangInDb,
   createSamplingRequestInDb,
@@ -32,7 +48,13 @@ import {
   SamplingRequest,
 } from './types/lims';
 
-type PageView = 'landing' | 'login' | 'portal';
+interface RedirectLocationState {
+  from?: {
+    pathname: string;
+    search?: string;
+    hash?: string;
+  };
+}
 
 function isUserAuthAllowed(fbUser: User): boolean {
   const email = (fbUser.email || '').toLowerCase();
@@ -43,11 +65,184 @@ function isUserAuthAllowed(fbUser: User): boolean {
   return fbUser.emailVerified || (isSeededAccount && isPasswordProvider);
 }
 
-export default function App() {
-  const [view, setView] = useState<PageView>(() =>
-    window.location.hash === '#login' ? 'login' : 'landing'
+function SessionHydrationScreen() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-6 text-slate-900">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <div
+          className="h-10 w-10 animate-spin rounded-full border-2 border-slate-200 border-t-cyan-600"
+          role="status"
+          aria-label="Memulihkan sesi"
+        />
+        <div>
+          <p className="font-display text-base font-bold tracking-tight text-slate-900">
+            SmartLIMS
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Memulihkan sesi &amp; memverifikasi hak akses portal...
+          </p>
+        </div>
+      </div>
+    </div>
   );
-  const [selectedRole, setSelectedRole] = useState<PortalRoleId>('customer');
+}
+
+interface CustomerRouteViewProps {
+  authReady: boolean;
+  firebaseUser: User | null;
+  currentUser: DemoUser | null;
+  isAdminUser: boolean;
+  requests: SamplingRequest[];
+  calendarDays: CalendarCapacityDay[];
+  onAddRequest: (req: SamplingRequest) => Promise<void>;
+  onUpdateRequest: (req: SamplingRequest) => Promise<void>;
+  onLogout: () => Promise<void>;
+}
+
+function CustomerRouteView({
+  authReady,
+  firebaseUser,
+  currentUser,
+  isAdminUser,
+  requests,
+  calendarDays,
+  onAddRequest,
+  onUpdateRequest,
+  onLogout,
+}: CustomerRouteViewProps) {
+  const { tab } = useParams<{ tab: string }>();
+  const location = useLocation();
+
+  if (!authReady) {
+    return <SessionHydrationScreen />;
+  }
+
+  if (!firebaseUser || !isUserAuthAllowed(firebaseUser) || !currentUser) {
+    return <Navigate to={PUBLIC_ROUTES.login} state={{ from: location }} replace />;
+  }
+
+  if (currentUser.roleId !== 'customer' && isAdminUser) {
+    return (
+      <Navigate
+        to={getDefaultPortalPath(currentUser.roleId, isAdminUser)}
+        replace
+      />
+    );
+  }
+
+  const mappedTab = tab ? CUSTOMER_SLUG_TO_TAB[tab] : undefined;
+  if (!mappedTab) {
+    return <Navigate to="/pelanggan/dashboard" replace />;
+  }
+
+  return (
+    <CustomerPortal
+      activeTab={mappedTab}
+      currentUser={currentUser}
+      requests={requests}
+      calendarDays={calendarDays}
+      onAddRequest={onAddRequest}
+      onUpdateRequest={onUpdateRequest}
+      onLogout={onLogout}
+    />
+  );
+}
+
+interface AdminRouteViewProps {
+  authReady: boolean;
+  firebaseUser: User | null;
+  currentUser: DemoUser | null;
+  isAdminUser: boolean;
+  requests: SamplingRequest[];
+  calendarDays: CalendarCapacityDay[];
+  auditLogs: AuditLogEntry[];
+  usersDirectory: DemoUser[];
+  samplerTeams: SamplerTeam[];
+  onVerifyRequest: (requestId: string, verifierName: string) => Promise<void>;
+  onRejectRequest: (
+    requestId: string,
+    reason: string,
+    actorName: string
+  ) => Promise<void>;
+  onApproveKajiUlang: (
+    requestId: string,
+    review: KajiUlangReview
+  ) => Promise<void>;
+  onUpdateCalendarDay: (
+    date: string,
+    patch: Partial<CalendarCapacityDay>
+  ) => Promise<void>;
+  onLogout: () => Promise<void>;
+}
+
+function AdminRouteView({
+  authReady,
+  firebaseUser,
+  currentUser,
+  isAdminUser,
+  requests,
+  calendarDays,
+  auditLogs,
+  usersDirectory,
+  samplerTeams,
+  onVerifyRequest,
+  onRejectRequest,
+  onApproveKajiUlang,
+  onUpdateCalendarDay,
+  onLogout,
+}: AdminRouteViewProps) {
+  const { tab } = useParams<{ tab: string }>();
+  const location = useLocation();
+
+  if (!authReady) {
+    return <SessionHydrationScreen />;
+  }
+
+  if (!firebaseUser || !isUserAuthAllowed(firebaseUser) || !currentUser) {
+    return (
+      <Navigate
+        to={`${PUBLIC_ROUTES.login}?portal=internal`}
+        state={{ from: location }}
+        replace
+      />
+    );
+  }
+
+  if (currentUser.roleId === 'customer' || !isAdminUser) {
+    return <Navigate to="/pelanggan/dashboard" replace />;
+  }
+
+  const mappedTab = tab ? ADMIN_SLUG_TO_TAB[tab] : undefined;
+  if (!mappedTab) {
+    return (
+      <Navigate
+        to={getDefaultPortalPath(currentUser.roleId, isAdminUser)}
+        replace
+      />
+    );
+  }
+
+  return (
+    <AdminPortal
+      activeTab={mappedTab}
+      currentUser={currentUser}
+      requests={requests}
+      calendarDays={calendarDays}
+      auditLogs={auditLogs}
+      usersDirectory={usersDirectory}
+      samplerTeams={samplerTeams}
+      onVerifyRequest={onVerifyRequest}
+      onRejectRequest={onRejectRequest}
+      onApproveKajiUlang={onApproveKajiUlang}
+      onUpdateCalendarDay={onUpdateCalendarDay}
+      onLogout={onLogout}
+    />
+  );
+}
+
+export default function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
 
   // Firebase Auth & Profile State
   const [authReady, setAuthReady] = useState(false);
@@ -72,6 +267,33 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [usersDirectory, setUsersDirectory] = useState<DemoUser[]>([]);
 
+  // Update browser document title & scroll to top on route pathname change
+  useEffect(() => {
+    document.title = getRouteDocumentTitle(location.pathname);
+    if (!location.hash) {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }, [location.pathname, location.hash]);
+
+  // Migrate legacy hash URLs (#login, #portal-pelanggan, #portal-internal) cleanly
+  useEffect(() => {
+    if (location.pathname !== '/') return;
+    if (location.hash === '#login') {
+      navigate(PUBLIC_ROUTES.login, { replace: true });
+    } else if (location.hash === '#portal-pelanggan') {
+      navigate('/pelanggan/dashboard', { replace: true });
+    } else if (
+      location.hash === '#portal-internal' ||
+      location.hash === '#portal-admin'
+    ) {
+      navigate('/internal/dashboard', { replace: true });
+    }
+  }, [location.pathname, location.hash, navigate]);
+
+  const isAuthenticatedSession = Boolean(
+    authReady && firebaseUser && isUserAuthAllowed(firebaseUser) && currentUser
+  );
+
   const completeAuthenticatedSignIn = async (
     fbUser: User,
     desiredRole: PortalRoleId,
@@ -86,12 +308,25 @@ export default function App() {
     setFirebaseUser(fbUser);
     setCurrentUser(user);
     setIsAdminUser(isAdmin);
-    setView('portal');
-    window.location.hash = user.roleId === 'customer' ? 'portal-pelanggan' : 'portal-internal';
-    window.scrollTo({ top: 0, behavior: 'auto' });
+
+    const state = location.state as RedirectLocationState | null;
+    const intended = state?.from;
+    const defaultTarget = getDefaultPortalPath(user.roleId, isAdmin);
+
+    if (
+      intended?.pathname &&
+      isPathAllowedForUser(intended.pathname, user.roleId, isAdmin)
+    ) {
+      navigate(
+        `${intended.pathname}${intended.search ?? ''}${intended.hash ?? ''}`,
+        { replace: true }
+      );
+    } else {
+      navigate(defaultTarget, { replace: true });
+    }
   };
 
-  // Restore session on reload via Firebase onAuthStateChanged
+  // Restore session on reload (F5) via Firebase onAuthStateChanged BEFORE marking authReady
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
       setFirebaseUser(fbUser);
@@ -104,22 +339,18 @@ export default function App() {
       if (fbUser && isUserAuthAllowed(fbUser) && !currentUserRef.current) {
         try {
           const pending = pendingProfileRef.current;
+          const inferredRole: PortalRoleId =
+            pending?.role ??
+            (window.location.pathname.startsWith('/internal') ? 'admin' : 'customer');
           const { user, isAdmin } = await syncAndLoadUserProfile(
             fbUser,
-            pending?.role ?? selectedRole,
+            inferredRole,
             pending?.override
           );
           await seedInitialLimsData(fbUser, isAdmin);
           pendingProfileRef.current = null;
           setCurrentUser(user);
           setIsAdminUser(isAdmin);
-          if (
-            window.location.hash === '#portal-internal' ||
-            window.location.hash === '#portal-admin' ||
-            window.location.hash === '#portal-pelanggan'
-          ) {
-            setView('portal');
-          }
         } catch (err) {
           console.error('Failed to restore session:', err);
         }
@@ -163,29 +394,21 @@ export default function App() {
     };
   }, [authReady, firebaseUser, currentUser, isAdminUser]);
 
-  useEffect(() => {
-    const handleHashChange = () => {
-      if (window.location.hash === '#login' && !currentUser) {
-        setView('login');
-      } else if (window.location.hash === '' && !currentUser) {
-        setView('landing');
-      }
-    };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [currentUser]);
-
   const navigateToLogin = (preselectedRole: PortalRoleId = 'customer') => {
-    setSelectedRole(preselectedRole);
-    setView('login');
-    window.location.hash = 'login';
-    window.scrollTo({ top: 0, behavior: 'auto' });
+    if (isAuthenticatedSession && currentUser) {
+      navigate(getDefaultPortalPath(currentUser.roleId, isAdminUser));
+      return;
+    }
+
+    if (preselectedRole !== 'customer') {
+      navigate(`${PUBLIC_ROUTES.login}?portal=internal`);
+    } else {
+      navigate(PUBLIC_ROUTES.login);
+    }
   };
 
   const navigateToLanding = () => {
-    setView('landing');
-    window.location.hash = '';
-    window.scrollTo({ top: 0, behavior: 'auto' });
+    navigate(PUBLIC_ROUTES.landing);
   };
 
   const handleFirebaseAuthSuccess = async (
@@ -207,9 +430,7 @@ export default function App() {
     await signOut(auth);
     setCurrentUser(null);
     setIsAdminUser(false);
-    setView('login');
-    window.location.hash = 'login';
-    window.scrollTo({ top: 0, behavior: 'auto' });
+    navigate(PUBLIC_ROUTES.login, { replace: true });
   };
 
   const handleAddRequest = async (newReq: SamplingRequest) => {
@@ -263,42 +484,22 @@ export default function App() {
     await updateCalendarDayInDb(date, patch);
   };
 
-  if (view === 'portal' && currentUser && firebaseUser) {
-    if (currentUser.roleId === 'customer' || !isAdminUser) {
-      return (
-        <CustomerPortal
-          currentUser={currentUser}
-          requests={requests}
-          calendarDays={calendarDays}
-          onAddRequest={handleAddRequest}
-          onUpdateRequest={handleResubmitRequest}
-          onLogout={handleLogout}
-        />
-      );
+  const renderAuthPage = (initialTab: 'login' | 'register') => {
+    if (isAuthenticatedSession && currentUser) {
+      const state = location.state as RedirectLocationState | null;
+      const intended = state?.from;
+      const target =
+        intended?.pathname &&
+        isPathAllowedForUser(intended.pathname, currentUser.roleId, isAdminUser)
+          ? `${intended.pathname}${intended.search ?? ''}${intended.hash ?? ''}`
+          : getDefaultPortalPath(currentUser.roleId, isAdminUser);
+      return <Navigate to={target} replace />;
     }
 
     return (
-      <AdminPortal
-        currentUser={currentUser}
-        requests={requests}
-        calendarDays={calendarDays}
-        auditLogs={auditLogs}
-        usersDirectory={usersDirectory}
-        samplerTeams={samplerTeams}
-        onVerifyRequest={handleVerifyRequest}
-        onRejectRequest={handleRejectRequest}
-        onApproveKajiUlang={handleApproveKajiUlang}
-        onUpdateCalendarDay={handleUpdateCalendarDay}
-        onLogout={handleLogout}
-      />
-    );
-  }
-
-  if (view === 'login') {
-    return (
       <>
         <LoginPage
-          initialRole={selectedRole}
+          initialTab={initialTab}
           onBackToLanding={navigateToLanding}
           onAuthStart={() => {
             isInteractiveLoginRef.current = true;
@@ -311,12 +512,99 @@ export default function App() {
         <PublicAiChatbot pageContext="login" />
       </>
     );
-  }
+  };
 
   return (
-    <>
-      <LandingPage onNavigateLogin={navigateToLogin} />
-      <PublicAiChatbot pageContext="landing" />
-    </>
+    <Routes>
+      {/* Public Routes */}
+      <Route
+        path={PUBLIC_ROUTES.landing}
+        element={
+          <>
+            <LandingPage onNavigateLogin={navigateToLogin} />
+            <PublicAiChatbot pageContext="landing" />
+          </>
+        }
+      />
+      <Route path={PUBLIC_ROUTES.login} element={renderAuthPage('login')} />
+      <Route path={PUBLIC_ROUTES.register} element={renderAuthPage('register')} />
+
+      {/* Customer Portal Routes */}
+      <Route
+        path="/pelanggan"
+        element={<Navigate to="/pelanggan/dashboard" replace />}
+      />
+      <Route
+        path="/pelanggan/:tab"
+        element={
+          <CustomerRouteView
+            authReady={authReady}
+            firebaseUser={firebaseUser}
+            currentUser={currentUser}
+            isAdminUser={isAdminUser}
+            requests={requests}
+            calendarDays={calendarDays}
+            onAddRequest={handleAddRequest}
+            onUpdateRequest={handleResubmitRequest}
+            onLogout={handleLogout}
+          />
+        }
+      />
+
+      {/* Internal Lab Portal Routes */}
+      <Route
+        path="/internal"
+        element={
+          !authReady ? (
+            <SessionHydrationScreen />
+          ) : isAuthenticatedSession && currentUser ? (
+            <Navigate
+              to={getDefaultPortalPath(currentUser.roleId, isAdminUser)}
+              replace
+            />
+          ) : (
+            <Navigate to={`${PUBLIC_ROUTES.login}?portal=internal`} replace />
+          )
+        }
+      />
+      <Route
+        path="/internal/:tab"
+        element={
+          <AdminRouteView
+            authReady={authReady}
+            firebaseUser={firebaseUser}
+            currentUser={currentUser}
+            isAdminUser={isAdminUser}
+            requests={requests}
+            calendarDays={calendarDays}
+            auditLogs={auditLogs}
+            usersDirectory={usersDirectory}
+            samplerTeams={samplerTeams}
+            onVerifyRequest={handleVerifyRequest}
+            onRejectRequest={handleRejectRequest}
+            onApproveKajiUlang={handleApproveKajiUlang}
+            onUpdateCalendarDay={handleUpdateCalendarDay}
+            onLogout={handleLogout}
+          />
+        }
+      />
+
+      {/* Fallback for unknown paths */}
+      <Route
+        path="*"
+        element={
+          !authReady ? (
+            <SessionHydrationScreen />
+          ) : isAuthenticatedSession && currentUser ? (
+            <Navigate
+              to={getDefaultPortalPath(currentUser.roleId, isAdminUser)}
+              replace
+            />
+          ) : (
+            <Navigate to={PUBLIC_ROUTES.landing} replace />
+          )
+        }
+      />
+    </Routes>
   );
 }

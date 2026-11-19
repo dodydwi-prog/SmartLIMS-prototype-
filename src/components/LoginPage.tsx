@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   User as UserIcon,
 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DEMO_USERS } from '../data/limsMockDatabase';
 import {
   INDUSTRY_SECTORS,
@@ -29,6 +30,7 @@ import {
   PortalRoleId,
 } from '../data/limsPreviewData';
 import { auth } from '../lib/firebase';
+import { PUBLIC_ROUTES } from '../routes';
 import {
   checkUsernameAvailable,
   isValidUsernameFormat,
@@ -39,8 +41,11 @@ import {
 } from '../services/limsFirestore';
 import { DemoUser } from '../types/lims';
 
+type AuthTab = 'login' | 'register';
+
 interface LoginPageProps {
   initialRole?: PortalRoleId;
+  initialTab?: AuthTab;
   onBackToLanding: () => void;
   onAuthStart?: () => void;
   onAuthAbort?: () => void;
@@ -50,8 +55,6 @@ interface LoginPageProps {
     corporateOverride?: Partial<DemoUser>
   ) => Promise<void>;
 }
-
-type AuthTab = 'login' | 'register';
 
 function mapFirebaseAuthError(err: unknown): string {
   const code =
@@ -94,16 +97,42 @@ function mapFirebaseAuthError(err: unknown): string {
 
 export function LoginPage({
   initialRole = 'customer',
+  initialTab = 'login',
   onBackToLanding,
   onAuthStart,
   onAuthAbort,
   onFirebaseAuthSuccess,
 }: LoginPageProps) {
-  const [selectedRoleId, setSelectedRoleId] = useState<PortalRoleId>(initialRole);
-  const [authTab, setAuthTab] = useState<AuthTab>('login');
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const portalQuery = searchParams.get('portal');
+
+  const resolvedInitialRole: PortalRoleId =
+    initialTab === 'register'
+      ? 'customer'
+      : portalQuery === 'internal'
+        ? 'admin'
+        : portalQuery === 'pelanggan'
+          ? 'customer'
+          : initialRole;
+
+  const [selectedRoleId, setSelectedRoleId] = useState<PortalRoleId>(resolvedInitialRole);
+  const [authTab, setAuthTab] = useState<AuthTab>(initialTab);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
+
+  // Keep local tab & portal role synchronized with browser URL (Back/Forward/F5)
+  useEffect(() => {
+    setAuthTab(initialTab);
+    if (initialTab === 'register') {
+      setSelectedRoleId('customer');
+    } else if (portalQuery === 'internal') {
+      setSelectedRoleId((prev) => (prev === 'customer' ? 'admin' : prev));
+    } else if (portalQuery === 'pelanggan') {
+      setSelectedRoleId('customer');
+    }
+  }, [initialTab, portalQuery]);
 
   // Login credentials (Email / Username + Password)
   const [identifier, setIdentifier] = useState('');
@@ -162,7 +191,10 @@ export function LoginPage({
     setAuthError(null);
     try {
       await sendEmailVerification(fbUser, {
-        url: typeof window !== 'undefined' ? window.location.origin : 'https://smart-lims-sda.vercel.app',
+        url:
+          typeof window !== 'undefined'
+            ? `${window.location.origin}/login`
+            : 'https://smart-lims-sda.vercel.app/login',
       });
       setAuthNotice(
         `Tautan verifikasi email telah dikirim ke ${fbUser.email ?? 'email Anda'}. Buka kotak masuk atau folder Spam, klik tautan verifikasi, lalu tekan tombol konfirmasi di bawah.`
@@ -218,7 +250,10 @@ export function LoginPage({
     setIsCheckingVerification(true);
     try {
       await sendEmailVerification(pendingVerificationUser, {
-        url: typeof window !== 'undefined' ? window.location.origin : 'https://smart-lims-sda.vercel.app',
+        url:
+          typeof window !== 'undefined'
+            ? `${window.location.origin}/login`
+            : 'https://smart-lims-sda.vercel.app/login',
       });
       setAuthNotice(
         `Tautan verifikasi baru telah dikirim ulang ke ${pendingVerificationUser.email ?? 'email Anda'}.`
@@ -247,8 +282,29 @@ export function LoginPage({
     setSelectedRoleId(roleId);
     setAuthError(null);
     setAuthNotice(null);
-    if (roleId !== 'customer' && authTab === 'register') {
+    if (roleId !== 'customer') {
       setAuthTab('login');
+      navigate(`${PUBLIC_ROUTES.login}?portal=internal`);
+    } else if (authTab === 'register') {
+      navigate(PUBLIC_ROUTES.register);
+    } else {
+      navigate(PUBLIC_ROUTES.login);
+    }
+  };
+
+  const handleAuthTabSwitch = (nextTab: AuthTab) => {
+    setAuthTab(nextTab);
+    setAuthError(null);
+    setAuthNotice(null);
+    if (nextTab === 'register') {
+      setSelectedRoleId('customer');
+      navigate(PUBLIC_ROUTES.register);
+    } else {
+      navigate(
+        selectedRoleId !== 'customer'
+          ? `${PUBLIC_ROUTES.login}?portal=internal`
+          : PUBLIC_ROUTES.login
+      );
     }
   };
 
@@ -729,11 +785,7 @@ export function LoginPage({
                     type="button"
                     role="tab"
                     aria-selected={authTab === 'login'}
-                    onClick={() => {
-                      setAuthTab('login');
-                      setAuthError(null);
-                      setAuthNotice(null);
-                    }}
+                    onClick={() => handleAuthTabSwitch('login')}
                     className={`min-h-[40px] rounded-md px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
                       authTab === 'login'
                         ? 'bg-white text-slate-900 shadow-xs'
@@ -746,11 +798,7 @@ export function LoginPage({
                     type="button"
                     role="tab"
                     aria-selected={authTab === 'register'}
-                    onClick={() => {
-                      setAuthTab('register');
-                      setAuthError(null);
-                      setAuthNotice(null);
-                    }}
+                    onClick={() => handleAuthTabSwitch('register')}
                     className={`min-h-[40px] rounded-md px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
                       authTab === 'register'
                         ? 'bg-white text-slate-900 shadow-xs'
