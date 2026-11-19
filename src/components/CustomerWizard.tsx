@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
   CalendarDays,
   Check,
+  ChevronLeft,
+  ChevronRight,
   LocateFixed,
+  Lock,
   MapPin,
   Plus,
   Trash2,
@@ -23,6 +26,17 @@ import {
   SamplingPointItem,
   SamplingRequest,
 } from '../types/lims';
+import {
+  ID_MONTH_NAMES,
+  addDaysIso,
+  buildCalendarDayMetadata,
+  findEarliestBookableCustomerDate,
+  formatIndonesianFullDate,
+  getCustomerMinBookingIsoDate,
+  isDateBeforeCustomerLeadTime,
+  parseIsoDate,
+  resolveCalendarDay,
+} from '../utils/calendarUtils';
 
 interface CustomerWizardProps {
   currentUser: DemoUser;
@@ -116,17 +130,22 @@ export function CustomerWizard({
       )
       .reduce((sum, r) => sum + r.points.length, 0);
 
-  // Step 2 state
-  const firstAvailableDay = calendarDays.find((day) => {
-    const used = getUsedSlotsForDate(day.date);
-    return !day.isLocked && day.maxCapacity - used > 0;
-  });
+  const minCustomerBookingIso = getCustomerMinBookingIsoDate();
+  const minCustomerBookingLabel = buildCalendarDayMetadata(minCustomerBookingIso).dateLabel;
+
+  // Step 2 state (enforce H-3 lead-time rule for customer bookings)
+  const earliestBookableDate = findEarliestBookableCustomerDate(
+    calendarDays,
+    getUsedSlotsForDate
+  );
+
+  const validInitialDate =
+    initialDate && !isDateBeforeCustomerLeadTime(initialDate) ? initialDate : null;
+
   const [scheduledDate, setScheduledDate] = useState<string>(
-    editingRequest?.scheduledDate ??
-      initialDate ??
-      firstAvailableDay?.date ??
-      calendarDays[0]?.date ??
-      '2026-11-23'
+    editingRequest?.scheduledDate && !isDateBeforeCustomerLeadTime(editingRequest.scheduledDate)
+      ? editingRequest.scheduledDate
+      : validInitialDate ?? earliestBookableDate
   );
 
   // Step 3 & 4 state
@@ -157,10 +176,138 @@ export function CustomerWizard({
 
   const activeSector = INDUSTRY_SECTORS.find((s) => s.id === sectorId) ?? null;
 
-  const selectedDayInfo = calendarDays.find((d) => d.date === scheduledDate);
-  const selectedDayRemaining = selectedDayInfo
-    ? Math.max(0, selectedDayInfo.maxCapacity - getUsedSlotsForDate(selectedDayInfo.date))
-    : 0;
+  const selectedDayInfo = resolveCalendarDay(scheduledDate, calendarDays);
+  const selectedDayBlockedByLeadTime = isDateBeforeCustomerLeadTime(scheduledDate);
+  const selectedDayRemaining =
+    selectedDayInfo.isLocked || selectedDayBlockedByLeadTime
+      ? 0
+      : Math.max(0, selectedDayInfo.maxCapacity - getUsedSlotsForDate(selectedDayInfo.date));
+
+  // Generate a scrollable multi-month sequence of date cards starting from H+3 (min 60 days ahead, extending if scheduledDate is further)
+  const wizardSelectableDays = useMemo(() => {
+    const startDate = parseIsoDate(minCustomerBookingIso);
+    const chosenDate = parseIsoDate(scheduledDate);
+    const diffDays = Math.ceil(
+      (chosenDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    const totalDays = Math.max(60, diffDays + 14);
+    const days: (CalendarCapacityDay & { isWeekend: boolean; isConfiguredInDb: boolean })[] = [];
+
+    for (let offset = 0; offset < totalDays; offset++) {
+      const iso = addDaysIso(minCustomerBookingIso, offset);
+      days.push(resolveCalendarDay(iso, calendarDays));
+    }
+    return days;
+  }, [minCustomerBookingIso, scheduledDate, calendarDays]);
+
+  // Horizontal card carousel refs & controls (Step 2)
+  const dateCarouselRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollPrev, setCanScrollPrev] = useState(false);
+  const [canScrollNext, setCanScrollNext] = useState(true);
+  const [visibleMonthLabel, setVisibleMonthLabel] = useState<string>(() => {
+    const d = parseIsoDate(scheduledDate);
+    return `${ID_MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+  });
+  const [isDraggingCarousel, setIsDraggingCarousel] = useState(false);
+  const dragStateRef = useRef<{
+    isDown: boolean;
+    startX: number;
+    scrollLeft: number;
+    moved: boolean;
+  }>({ isDown: false, startX: 0, scrollLeft: 0, moved: false });
+
+  const updateCarouselScrollState = () => {
+    const el = dateCarouselRef.current;
+    if (!el) return;
+    setCanScrollPrev(el.scrollLeft > 4);
+    setCanScrollNext(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+
+    // Derive visible month label from the leftmost visible card
+    const approxCardStep = 280;
+    const approxIdx = Math.min(
+      wizardSelectableDays.length - 1,
+      Math.max(0, Math.round(el.scrollLeft / approxCardStep))
+    );
+    const visibleDay = wizardSelectableDays[approxIdx];
+    if (visibleDay) {
+      const d = parseIsoDate(visibleDay.date);
+      setVisibleMonthLabel(`${ID_MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`);
+    }
+  };
+
+  // Scroll the selected date card into view whenever entering Step 2
+  useEffect(() => {
+    if (step !== 2) return;
+    const container = dateCarouselRef.current;
+    if (!container) return;
+    const selectedCard = container.querySelector<HTMLElement>(
+      `[data-date-card="${scheduledDate}"]`
+    );
+    if (selectedCard) {
+      const targetLeft = Math.max(0, selectedCard.offsetLeft - 12);
+      container.scrollTo({ left: targetLeft, behavior: 'auto' });
+    }
+    const raf = window.requestAnimationFrame(updateCarouselScrollState);
+    return () => window.cancelAnimationFrame(raf);
+  }, [step]);
+
+  const scrollDateCarousel = (direction: 'prev' | 'next') => {
+    const el = dateCarouselRef.current;
+    if (!el) return;
+    const stepPx = Math.max(280, Math.floor(el.clientWidth * 0.85));
+    el.scrollBy({
+      left: direction === 'next' ? stepPx : -stepPx,
+      behavior: 'smooth',
+    });
+  };
+
+  const scrollToSelectedDateCard = () => {
+    const el = dateCarouselRef.current;
+    if (!el) return;
+    const selectedCard = el.querySelector<HTMLElement>(
+      `[data-date-card="${scheduledDate}"]`
+    );
+    if (selectedCard) {
+      el.scrollTo({
+        left: Math.max(0, selectedCard.offsetLeft - 12),
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  const handleCarouselMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    const el = dateCarouselRef.current;
+    if (!el) return;
+    dragStateRef.current = {
+      isDown: true,
+      startX: e.pageX - el.offsetLeft,
+      scrollLeft: el.scrollLeft,
+      moved: false,
+    };
+    setIsDraggingCarousel(true);
+  };
+
+  const handleCarouselMouseMove = (e: MouseEvent<HTMLDivElement>) => {
+    const el = dateCarouselRef.current;
+    if (!el || !dragStateRef.current.isDown) return;
+    const x = e.pageX - el.offsetLeft;
+    const delta = x - dragStateRef.current.startX;
+    if (Math.abs(delta) > 6) {
+      dragStateRef.current.moved = true;
+    }
+    if (dragStateRef.current.moved) {
+      e.preventDefault();
+      el.scrollLeft = dragStateRef.current.scrollLeft - delta;
+    }
+  };
+
+  const endCarouselDrag = () => {
+    dragStateRef.current.isDown = false;
+    setIsDraggingCarousel(false);
+    window.setTimeout(() => {
+      dragStateRef.current.moved = false;
+    }, 0);
+  };
 
   const labSubtotal = points.reduce((sum, pt) => sum + pt.pointCost, 0);
   const transportFee = editingRequest?.transportFee ?? 350000;
@@ -288,6 +435,12 @@ export function CustomerWizard({
       setStepError('Lengkapi nama perusahaan, penanggung jawab teknis, dan alamat lokasi.');
       return false;
     }
+    if (selectedDayBlockedByLeadTime) {
+      setStepError(
+        `Pengajuan permohonan sampling minimal H-3 (paling cepat tanggal ${minCustomerBookingLabel}).`
+      );
+      return false;
+    }
     if (!selectedDayInfo || selectedDayInfo.isLocked || selectedDayRemaining <= 0) {
       setStepError('Pilih tanggal sampling yang masih memiliki sisa kuota tim tersedia.');
       return false;
@@ -334,6 +487,12 @@ export function CustomerWizard({
     }
 
     if (step === 2) {
+      if (selectedDayBlockedByLeadTime) {
+        setStepError(
+          `Pengajuan permohonan sampling minimal H-3 (paling cepat tanggal ${minCustomerBookingLabel}).`
+        );
+        return;
+      }
       if (!selectedDayInfo || selectedDayInfo.isLocked || selectedDayRemaining <= 0) {
         setStepError('Pilih tanggal sampling yang masih memiliki sisa kuota tim tersedia.');
         return;
@@ -654,62 +813,176 @@ export function CustomerWizard({
 
         {step === 2 && (
           <div className="space-y-5">
-            <div>
-              <h3 className="font-display text-base font-bold text-slate-900">
-                Langkah 2: Pilih Tanggal Sampling &amp; Cek Kuota Tim Lapangan
-              </h3>
-              <p className="mt-1 text-xs text-slate-500">
-                Kuota diperbarui secara real-time berdasarkan jadwal tim pengambil contoh uji
-                bersertifikat BNSP.
-              </p>
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Langkah 2: Pilih Tanggal Sampling &amp; Cek Kuota Tim Lapangan
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Pengajuan sampling minimal H-3 (mulai{' '}
+                  <span className="font-mono font-semibold text-slate-700">
+                    {minCustomerBookingLabel}
+                  </span>
+                  ). Geser kartu tanggal ke kiri/kanan atau gunakan tombol navigasi untuk memilih
+                  jadwal.
+                </p>
+              </div>
+
+              {/* Carousel Navigation Toolbar (Back / Visible Month / Next) */}
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-display text-xs font-semibold text-slate-700">
+                  {visibleMonthLabel}
+                </span>
+                <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white">
+                  <button
+                    type="button"
+                    disabled={!canScrollPrev}
+                    onClick={() => scrollDateCarousel('prev')}
+                    aria-label="Geser ke tanggal sebelumnya"
+                    className="inline-flex h-10 items-center gap-1 rounded-l-lg px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:text-slate-300 disabled:hover:bg-white disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                    <span className="hidden sm:inline">Back</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canScrollNext}
+                    onClick={() => scrollDateCarousel('next')}
+                    aria-label="Geser ke tanggal berikutnya"
+                    className="inline-flex h-10 items-center gap-1 rounded-r-lg border-l border-slate-200 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:text-slate-300 disabled:hover:bg-white disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <span className="hidden sm:inline">Next</span>
+                    <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {calendarDays.map((day) => {
-                const used = getUsedSlotsForDate(day.date);
-                const remaining = Math.max(0, day.maxCapacity - used);
-                const unavailable = day.isLocked || remaining === 0;
-                const isSelected = scheduledDate === day.date;
+            {/* Horizontally Scrollable & Draggable Date Cards Track */}
+            <div className="relative">
+              <div
+                ref={dateCarouselRef}
+                onScroll={updateCarouselScrollState}
+                onMouseDown={handleCarouselMouseDown}
+                onMouseMove={handleCarouselMouseMove}
+                onMouseUp={endCarouselDrag}
+                onMouseLeave={endCarouselDrag}
+                role="region"
+                aria-label="Daftar pilihan tanggal sampling yang dapat digeser"
+                className={`flex gap-3 overflow-x-auto pb-2 pt-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden select-none ${
+                  isDraggingCarousel
+                    ? 'cursor-grabbing'
+                    : 'snap-x snap-proximity cursor-grab'
+                }`}
+              >
+                {wizardSelectableDays.map((day) => {
+                  const used = getUsedSlotsForDate(day.date);
+                  const remaining = day.isLocked ? 0 : Math.max(0, day.maxCapacity - used);
+                  const beforeLeadTime = isDateBeforeCustomerLeadTime(day.date);
+                  const unavailable = beforeLeadTime || day.isLocked || remaining === 0;
+                  const isSelected = scheduledDate === day.date;
 
-                return (
-                  <button
-                    key={day.date}
-                    type="button"
-                    disabled={unavailable}
-                    onClick={() => setScheduledDate(day.date)}
-                    className={`flex flex-col justify-between rounded-xl border p-4 text-left transition-colors ${
-                      unavailable
-                        ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
-                        : isSelected
-                          ? 'border-cyan-600 bg-cyan-50/70 text-slate-900 cursor-pointer'
-                          : 'border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50 cursor-pointer'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <CalendarDays className="h-4 w-4 text-slate-500" aria-hidden="true" />
-                        <span className="font-display text-sm font-bold">{day.dateLabel}</span>
+                  return (
+                    <button
+                      key={day.date}
+                      data-date-card={day.date}
+                      type="button"
+                      disabled={unavailable}
+                      onClick={() => {
+                        if (dragStateRef.current.moved) return;
+                        setScheduledDate(day.date);
+                      }}
+                      className={`flex w-[256px] sm:w-[272px] shrink-0 snap-start flex-col justify-between rounded-xl border p-4 text-left transition-colors ${
+                        unavailable
+                          ? 'border-slate-200 bg-slate-100/90 text-slate-400 cursor-not-allowed'
+                          : isSelected
+                            ? 'border-cyan-600 bg-cyan-50/70 text-slate-900 ring-1 ring-cyan-600/20 cursor-pointer'
+                            : 'border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50 cursor-pointer'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <CalendarDays
+                              className={`h-4 w-4 shrink-0 ${
+                                isSelected ? 'text-cyan-700' : 'text-slate-500'
+                              }`}
+                              aria-hidden="true"
+                            />
+                            <span className="truncate font-display text-sm font-bold">
+                              {day.dayLabel}, {day.dateLabel}
+                            </span>
+                          </div>
+                          <span
+                            className={`shrink-0 font-mono text-xs font-semibold tabular-nums ${
+                              beforeLeadTime || day.isLocked
+                                ? 'text-slate-500'
+                                : remaining === 0
+                                  ? 'text-rose-600'
+                                  : 'text-emerald-700'
+                            }`}
+                          >
+                            {beforeLeadTime ? (
+                              'Min. H-3'
+                            ) : day.isLocked ? (
+                              <span className="inline-flex items-center gap-1">
+                                <Lock className="h-3 w-3" aria-hidden="true" />
+                                <span>
+                                  {day.isWeekend && !day.isConfiguredInDb ? 'Libur' : 'Terkunci'}
+                                </span>
+                              </span>
+                            ) : remaining === 0 ? (
+                              'Penuh'
+                            ) : (
+                              `${remaining}/${day.maxCapacity} Slot`
+                            )}
+                          </span>
+                        </div>
+                        <p className="mt-2.5 line-clamp-2 text-xs leading-relaxed text-slate-500">
+                          {day.equipmentNote}
+                        </p>
                       </div>
-                      <span
-                        className={`font-mono text-xs font-semibold ${
-                          day.isLocked
-                            ? 'text-slate-500'
-                            : remaining === 0
-                              ? 'text-rose-600'
-                              : 'text-emerald-700'
-                        }`}
-                      >
-                        {day.isLocked
-                          ? 'Terkunci'
-                          : remaining === 0
-                            ? 'Penuh'
-                            : `${remaining}/${day.maxCapacity} Slot`}
-                      </span>
-                    </div>
-                    <p className="mt-2.5 text-xs text-slate-500">{day.equipmentNote}</p>
-                  </button>
-                );
-              })}
+
+                      <div className="mt-3 flex items-center justify-between border-t border-slate-200/70 pt-2.5 text-[11px]">
+                        <span className="font-mono text-slate-400">{day.date}</span>
+                        {isSelected ? (
+                          <span className="inline-flex items-center gap-1 font-semibold text-cyan-700">
+                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Dipilih</span>
+                          </span>
+                        ) : unavailable ? (
+                          <span className="text-slate-400">Tidak tersedia</span>
+                        ) : (
+                          <span className="font-medium text-slate-600">Pilih tanggal</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Selected Date Confirmation Strip */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3 text-xs">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-700">
+                <span className="font-medium text-slate-500">Tanggal Sampling Dipilih:</span>
+                <span className="font-display font-bold text-slate-900">
+                  {formatIndonesianFullDate(scheduledDate)}
+                </span>
+                <span aria-hidden="true" className="text-slate-300">
+                  ·
+                </span>
+                <span className="font-mono font-semibold tabular-nums text-emerald-700">
+                  {selectedDayRemaining}/{selectedDayInfo.maxCapacity} slot tersedia
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={scrollToSelectedDateCard}
+                className="font-semibold text-cyan-700 hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                Fokus ke tanggal dipilih
+              </button>
             </div>
           </div>
         )}

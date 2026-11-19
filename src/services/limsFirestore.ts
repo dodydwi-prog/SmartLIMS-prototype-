@@ -912,17 +912,70 @@ export async function updateCalendarDayInDb(
   patch: Partial<CalendarCapacityDay>
 ): Promise<void> {
   const dayPath = `calendar_days/${date}`;
+  const dayRef = doc(db, 'calendar_days', date);
   try {
-    const updatePayload: Record<string, unknown> = {
-      updatedAt: serverTimestamp(),
-    };
-    if (typeof patch.maxCapacity === 'number') updatePayload.maxCapacity = patch.maxCapacity;
-    if (typeof patch.isLocked === 'boolean') updatePayload.isLocked = patch.isLocked;
-    if (typeof patch.equipmentNote === 'string') {
-      updatePayload.equipmentNote = patch.equipmentNote.slice(0, 250);
+    const existingSnap = await getDoc(dayRef);
+
+    if (existingSnap.exists()) {
+      const updatePayload: Record<string, unknown> = {
+        updatedAt: serverTimestamp(),
+      };
+      if (typeof patch.maxCapacity === 'number') {
+        updatePayload.maxCapacity = Math.min(25, Math.max(1, patch.maxCapacity));
+      }
+      if (typeof patch.isLocked === 'boolean') {
+        updatePayload.isLocked = patch.isLocked;
+      }
+      if (typeof patch.equipmentNote === 'string') {
+        updatePayload.equipmentNote = patch.equipmentNote.slice(0, 250);
+      }
+      await updateDoc(dayRef, updatePayload);
+      return;
     }
-    await updateDoc(doc(db, 'calendar_days', date), updatePayload);
+
+    // Create a newly configured date document matching Firestore rules schema
+    const [y, m, d] = date.split('-').map(Number);
+    const parsedDate = new Date(y || 2026, (m || 1) - 1, d || 1);
+    const dow = parsedDate.getDay();
+    const dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+    const monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'Mei',
+      'Jun',
+      'Jul',
+      'Agu',
+      'Sep',
+      'Okt',
+      'Nov',
+      'Des',
+    ];
+    const isWeekend = dow === 0 || dow === 6;
+
+    await setDoc(dayRef, {
+      date,
+      dayLabel: (patch.dayLabel || dayNames[dow] || 'Sen').slice(0, 20),
+      dateLabel: (
+        patch.dateLabel ||
+        `${parsedDate.getDate()} ${monthNames[parsedDate.getMonth()]} ${parsedDate.getFullYear()}`
+      ).slice(0, 40),
+      maxCapacity: Math.min(
+        25,
+        Math.max(1, typeof patch.maxCapacity === 'number' ? patch.maxCapacity : isWeekend ? 2 : 6)
+      ),
+      isLocked: typeof patch.isLocked === 'boolean' ? patch.isLocked : isWeekend,
+      equipmentNote: (
+        typeof patch.equipmentNote === 'string'
+          ? patch.equipmentNote
+          : isWeekend
+            ? 'Akhir pekan — operasional tim sampling reguler libur.'
+            : 'Paket Standar Air Limbah, Udara Ambien, & Air Bersih (Tim Sampler BNSP Siap).'
+      ).slice(0, 250),
+      updatedAt: serverTimestamp(),
+    });
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, dayPath);
+    handleFirestoreError(error, OperationType.WRITE, dayPath);
   }
 }

@@ -141,7 +141,10 @@ export function LandingPage({ onNavigateLogin }: LandingPageProps) {
                   className="mt-4 font-display font-bold tracking-tight text-slate-900 text-balance"
                   style={{ fontSize: 'clamp(2.25rem, 3.8vw, 3.5rem)', lineHeight: 1.08 }}
                 >
-                  Permohonan Sampling Lingkungan Cepat, Presisi, dan Terstandar.
+                  Permohonan Sampling Lingkungan{' '}
+                  <span className="bg-gradient-to-r from-cyan-500 via-sky-500 to-emerald-500 bg-clip-text text-transparent">
+                    Cepat, Presisi, dan Terstandar.
+                  </span>
                 </h1>
 
                 <p className="mt-6 max-w-2xl text-base leading-relaxed text-slate-600 sm:text-lg">
