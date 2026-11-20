@@ -3,7 +3,10 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handlePublicChatRequest } from './src/server/publicChatEngine.ts';
+import {
+  handlePublicChatRequest,
+  handlePublicChatStreamRequest,
+} from './src/server/publicChatEngine.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +31,55 @@ async function startServer(): Promise<void> {
         : Array.isArray(forwardedFor)
           ? forwardedFor[0]
           : req.ip || req.socket.remoteAddress || 'unknown';
+
+    const wantsStream =
+      Boolean(req.headers.accept?.includes('text/event-stream')) ||
+      (typeof req.body === 'object' &&
+        req.body !== null &&
+        (req.body as { stream?: unknown }).stream === true);
+
+    if (wantsStream) {
+      let streamStarted = false;
+      const sendSse = (event: string, data: unknown) => {
+        if (res.writableEnded) return;
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const preflightError = await handlePublicChatStreamRequest(req.body, rawIp, {
+        onStartStream: () => {
+          streamStarted = true;
+          res.status(200);
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('Connection', 'keep-alive');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.flushHeaders?.();
+        },
+        onDelta: (text) => {
+          sendSse('delta', { text });
+        },
+        onDone: (meta) => {
+          sendSse('done', meta);
+          if (!res.writableEnded) res.end();
+        },
+        onStreamError: (payload) => {
+          sendSse('error', payload);
+          if (!res.writableEnded) res.end();
+        },
+      });
+
+      if (preflightError && !streamStarted) {
+        if (preflightError.headers) {
+          for (const [key, value] of Object.entries(preflightError.headers)) {
+            res.setHeader(key, value);
+          }
+        }
+        res.status(preflightError.status).json(preflightError.body);
+      } else if (streamStarted && !res.writableEnded) {
+        res.end();
+      }
+      return;
+    }
 
     const result = await handlePublicChatRequest(req.body, rawIp);
     if (result.headers) {

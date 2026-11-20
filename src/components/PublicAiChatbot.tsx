@@ -131,10 +131,12 @@ export function PublicAiChatbot({ pageContext }: PublicAiChatbotProps) {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [hasUserChatted, setHasUserChatted] = useState(false);
 
   const scrollEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Sync welcome prompt cleanly when switching between Landing & Login before user chats
   useEffect(() => {
@@ -143,15 +145,26 @@ export function PublicAiChatbot({ pageContext }: PublicAiChatbotProps) {
     }
   }, [pageContext, hasUserChatted]);
 
+  // Abort active stream cleanly on component unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
   useEffect(() => {
     if (isOpen) {
-      scrollEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      const timer = window.setTimeout(() => {
-        inputRef.current?.focus();
-      }, 120);
-      return () => window.clearTimeout(timer);
+      scrollEndRef.current?.scrollIntoView({
+        behavior: streamingMessageId ? 'auto' : 'smooth',
+      });
+      if (!streamingMessageId) {
+        const timer = window.setTimeout(() => {
+          inputRef.current?.focus();
+        }, 120);
+        return () => window.clearTimeout(timer);
+      }
     }
-  }, [isOpen, messages, isSending]);
+  }, [isOpen, messages, isSending, streamingMessageId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -178,67 +191,167 @@ export function PublicAiChatbot({ pageContext }: PublicAiChatbotProps) {
     const historyForApi = messages
       .filter((m) => !m.id.startsWith('welcome-') && !m.isError)
       .slice(-6)
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({
+        role: m.role,
+        content: m.content.trim().slice(0, 1500),
+      }));
 
     setHasUserChatted(true);
     setMessages((prev) => [...prev, userMsg]);
     setInputValue('');
     setIsSending(true);
 
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    const botMsgId = `bot-${Date.now()}`;
+    let hasInsertedBotMsg = false;
+    let accumulatedText = '';
+
+    const upsertBotText = (nextText: string) => {
+      if (!hasInsertedBotMsg) {
+        hasInsertedBotMsg = true;
+        setStreamingMessageId(botMsgId);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: botMsgId,
+            role: 'assistant',
+            content: nextText,
+          },
+        ]);
+      } else {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === botMsgId ? { ...m, content: nextText } : m))
+        );
+      }
+    };
+
+    const appendErrorBubble = (errorText: string) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          role: 'assistant',
+          content: errorText,
+          isError: true,
+        },
+      ]);
+    };
+
     try {
       const response = await fetch('/api/public-chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'text/event-stream, application/json',
         },
         body: JSON.stringify({
           message: trimmed,
           pageContext,
+          stream: true,
           history: historyForApi,
         }),
+        signal: controller.signal,
       });
 
+      const contentType = response.headers.get('content-type') ?? '';
+
+      // Path A: Progressive Server-Sent Events (SSE) Streaming
+      if (response.ok && contentType.includes('text/event-stream') && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let streamErrorMessage: string | null = null;
+
+        const processEventBlock = (rawBlock: string) => {
+          const lines = rawBlock.split('\n');
+          let eventName = 'message';
+          const dataLines: string[] = [];
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              dataLines.push(line.slice(5).trim());
+            }
+          }
+
+          if (dataLines.length === 0) return;
+          let payload: Record<string, unknown> = {};
+          try {
+            payload = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
+          } catch {
+            return;
+          }
+
+          if (eventName === 'delta' && typeof payload.text === 'string') {
+            accumulatedText += payload.text;
+            upsertBotText(accumulatedText);
+          } else if (eventName === 'error' && typeof payload.error === 'string') {
+            streamErrorMessage = payload.error;
+          }
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+
+          let boundary = buffer.indexOf('\n\n');
+          while (boundary !== -1) {
+            const block = buffer.slice(0, boundary).trim();
+            buffer = buffer.slice(boundary + 2);
+            if (block) processEventBlock(block);
+            boundary = buffer.indexOf('\n\n');
+          }
+        }
+
+        const trailing = (buffer + decoder.decode()).trim();
+        if (trailing) {
+          processEventBlock(trailing);
+        }
+
+        if (streamErrorMessage) {
+          appendErrorBubble(streamErrorMessage);
+        } else if (!accumulatedText.trim()) {
+          appendErrorBubble(
+            'Gagal menerima jawaban dari SmartLIMS Assistant. Silakan coba kembali beberapa saat lagi.'
+          );
+        }
+        return;
+      }
+
+      // Path B: Standard JSON response (validation/rate-limit errors or non-SSE fallback)
       const data = (await response.json().catch(() => ({}))) as {
         reply?: string;
         error?: string;
       };
 
       if (!response.ok || !data.reply) {
-        const errorText =
+        appendErrorBubble(
           data.error ||
-          'Gagal menerima jawaban dari SmartLIMS Assistant. Silakan coba kembali beberapa saat lagi.';
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `err-${Date.now()}`,
-            role: 'assistant',
-            content: errorText,
-            isError: true,
-          },
-        ]);
+            'Gagal menerima jawaban dari SmartLIMS Assistant. Silakan coba kembali beberapa saat lagi.'
+        );
         return;
       }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `bot-${Date.now()}`,
-          role: 'assistant',
-          content: data.reply!,
-        },
-      ]);
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          role: 'assistant',
-          content:
-            'Koneksi ke server asisten terputus. Periksa jaringan internet Anda lalu coba lagi.',
-          isError: true,
-        },
-      ]);
+      upsertBotText(data.reply);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      appendErrorBubble(
+        accumulatedText
+          ? 'Koneksi terputus saat menerima sisa jawaban. Silakan kirim ulang jika memerlukan kelanjutan.'
+          : 'Koneksi ke server asisten terputus. Periksa jaringan internet Anda lalu coba lagi.'
+      );
     } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+      setStreamingMessageId(null);
       setIsSending(false);
     }
   };
@@ -249,6 +362,10 @@ export function PublicAiChatbot({ pageContext }: PublicAiChatbotProps) {
   };
 
   const handleReset = () => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setStreamingMessageId(null);
+    setIsSending(false);
     setHasUserChatted(false);
     setMessages([getWelcomeMessage(pageContext)]);
     setInputValue('');
@@ -347,12 +464,18 @@ export function PublicAiChatbot({ pageContext }: PublicAiChatbotProps) {
                   <div key={msg.id} className="flex justify-start">
                     <div className="max-w-[90%] rounded-2xl rounded-bl-sm border border-slate-200 bg-slate-50 px-3.5 py-2.5">
                       <SafeAssistantText content={msg.content} />
+                      {streamingMessageId === msg.id && (
+                        <span
+                          aria-hidden="true"
+                          className="mt-1 inline-block h-3.5 w-1.5 align-middle bg-cyan-600 motion-safe:animate-pulse"
+                        />
+                      )}
                     </div>
                   </div>
                 )
               )}
 
-              {isSending && (
+              {isSending && !streamingMessageId && (
                 <div className="flex justify-start">
                   <div className="inline-flex items-center gap-2 rounded-2xl rounded-bl-sm border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-500">
                     <span>Menyusun panduan...</span>
